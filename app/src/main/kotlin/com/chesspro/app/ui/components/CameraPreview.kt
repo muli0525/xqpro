@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.chesspro.app.core.chess.*
 import com.chesspro.app.core.recognition.ChessBoardRecognition
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -125,7 +126,7 @@ private fun bindCamera(
     provider: ProcessCameraProvider,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView,
-    imageAnalyzer: ImageAnalysis
+    analyzer: ChessBoardAnalyzer
 ) {
     // 预览
     val preview = Preview.Builder()
@@ -133,20 +134,28 @@ private fun bindCamera(
         .also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
-    
+
+    // 创建ImageAnalysis并设置分析器
+    val imageAnalysis = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .build()
+        .also {
+            it.setAnalyzer(Executors.newSingleThreadExecutor(), analyzer)
+        }
+
     // 选择后置相机
     val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-    
+
     try {
         // 解除之前的绑定
         provider.unbindAll()
-        
+
         // 绑定
         provider.bindToLifecycle(
             lifecycleOwner,
             cameraSelector,
             preview,
-            imageAnalyzer
+            imageAnalysis
         )
     } catch (e: Exception) {
         Log.e("CameraPreview", "相机绑定失败", e)

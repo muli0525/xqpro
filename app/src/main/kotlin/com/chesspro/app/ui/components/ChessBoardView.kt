@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -100,9 +101,9 @@ private fun ChessBoardCanvas(
                         val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragStart(Position(x, y))
                     },
-                    onDragEnd = { offset: Offset ->
-                        val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
-                        val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
+                    onDragEnd = {
+                        val x = ((it.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
+                        val y = ((it.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragEnd(Position(x, y))
                     },
                     onDrag = { change, _ ->
@@ -163,17 +164,16 @@ private fun ChessBoardCanvas(
         }
         
         // 楚河汉界文字
-        drawContext.canvas.nativeCanvas.apply {
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.BLACK
-                textSize = 24f
-                textAlign = android.graphics.Paint.Align.CENTER
-            }
-            drawText("楚", (padding + 1 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
-            drawText("河", (padding + 3 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
-            drawText("漢", (padding + 5 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
-            drawText("界", (padding + 7 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
+        val canvas = drawContext.canvas.nativeCanvas
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            textSize = 24f
+            textAlign = android.graphics.Paint.Align.CENTER
         }
+        canvas.drawText("楚", (padding + 1 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
+        canvas.drawText("河", (padding + 3 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
+        canvas.drawText("漢", (padding + 5 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
+        canvas.drawText("界", (padding + 7 * lineSpacing).toFloat(), (padding + 4.5f * lineSpacing), paint)
         
         // 九宫格斜线
         // 右上
