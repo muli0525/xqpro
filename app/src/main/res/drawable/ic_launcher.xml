@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- 象棋图标 -->
+    <group android:translateX="8" android:translateY="8">
+        <!-- 圆形背景 -->
+        <path
+            android:fillColor="#1976D2"
+            android:pathData="M16,16m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0"/>
+        <!-- 棋盘格子 -->
+        <path
+            android:fillColor="#DEB887"
+            android:pathData="M16,16m-12,0a12,12 0,1 1,24 0a12,12 0,1 1,-24 0"/>
+        <!-- 将/帅 -->
+        <path
+            android:fillColor="#D32F2F"
+            android:pathData="M16,16m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0"/>
+    </group>
+</vector>

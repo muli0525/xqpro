@@ -43,4 +43,7 @@
     <color name="on_primary_dark">#FF000000</color>
     <color name="on_background_dark">#FFFFFFFF</color>
     <color name="on_surface_dark">#FFFFFFFF</color>
+    
+    <!-- App图标颜色 -->
+    <color name="ic_launcher_background">#FF1976D2</color>
 </resources>
