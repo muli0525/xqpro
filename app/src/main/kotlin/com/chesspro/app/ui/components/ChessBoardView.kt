@@ -87,6 +87,7 @@ private fun ChessBoardCanvas(
     onDragStart: (Position) -> Unit,
     onDragEnd: (Position) -> Unit
 ) {
+    var currentDragOffset by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     val cellSize = boardSize / 9
     
     Canvas(
@@ -99,14 +100,19 @@ private fun ChessBoardCanvas(
                     onDragStart = { offset ->
                         val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
                         val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
+                        currentDragOffset = offset
                         onDragStart(Position(x, y))
                     },
-                    onDragEnd = { offset ->
-                        val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
-                        val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
-                        onDragEnd(Position(x, y))
+                    onDragEnd = {
+                        currentDragOffset?.let { offset ->
+                            val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
+                            val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
+                            onDragEnd(Position(x, y))
+                        }
+                        currentDragOffset = null
                     },
-                    onDrag = { change, _ ->
+                    onDrag = { change, dragAmount ->
+                        currentDragOffset = change.position
                         change.consume()
                     }
                 )
