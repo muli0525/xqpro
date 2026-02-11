@@ -77,7 +77,7 @@ fun CameraPreview(
                             provider = provider,
                             lifecycleOwner = lifecycleOwner,
                             previewView = preview,
-                            imageAnalyzer = ChessBoardAnalyzer(ctx) { bitmap ->
+                            analyzer = ChessBoardAnalyzer(ctx) { bitmap ->
                                 onImageCaptured(bitmap)
                             }
                         )
@@ -91,7 +91,7 @@ fun CameraPreview(
                         provider = provider,
                         lifecycleOwner = lifecycleOwner,
                         previewView = view,
-                        imageAnalyzer = ChessBoardAnalyzer(context) { bitmap ->
+                        analyzer = ChessBoardAnalyzer(context) { bitmap ->
                             onImageCaptured(bitmap)
                         }
                     )

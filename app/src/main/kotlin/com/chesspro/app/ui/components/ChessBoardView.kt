@@ -101,9 +101,9 @@ private fun ChessBoardCanvas(
                         val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragStart(Position(x, y))
                     },
-                    onDragEnd = {
-                        val x = ((it.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
-                        val y = ((it.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
+                    onDragEnd = { offset ->
+                        val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
+                        val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragEnd(Position(x, y))
                     },
                     onDrag = { change, _ ->
