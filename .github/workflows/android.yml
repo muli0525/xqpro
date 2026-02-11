@@ -38,10 +38,13 @@ jobs:
       
       # 设置Android SDK
       - name: Setup Android SDK
-        uses: maliksi/actions-android-sdk@v1
-        with:
-          api-level: 34
-          build-tools: 34.0.0
+        uses: android-actions/setup-android@v3
+      
+      # 安装所需的SDK组件
+      - name: Install Android SDK components
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
       
       # 运行Gradle检查
       - name: Run lint
@@ -77,10 +80,12 @@ jobs:
           cache: 'gradle'
       
       - name: Setup Android SDK
-        uses: maliksi/actions-android-sdk@v1
-        with:
-          api-level: 34
-          build-tools: 34.0.0
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Android SDK components
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
       
       # 构建Debug APK
       - name: Build Debug APK
@@ -126,10 +131,12 @@ jobs:
           cache: 'gradle'
       
       - name: Setup Android SDK
-        uses: maliksi/actions-android-sdk@v1
-        with:
-          api-level: 34
-          build-tools: 34.0.0
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Android SDK components
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
       
       # 解密签名文件（需要配置）
       - name: Decrypt signing key
