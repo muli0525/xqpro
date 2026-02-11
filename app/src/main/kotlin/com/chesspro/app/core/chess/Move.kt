@@ -56,7 +56,7 @@ data class Move(
             check: Boolean = false,
             checkmate: Boolean = false
         ): String {
-            val pieceSymbol = getNotationSymbol(piece.type)
+            val pieceSymbol = getNotationSymbol(piece.type, piece.color)
             val fromStr = formatPosition(from)
             val toStr = formatPosition(to)
             
@@ -68,13 +68,13 @@ data class Move(
             return notation
         }
 
-        private fun getNotationSymbol(type: PieceType): String {
+        private fun getNotationSymbol(type: PieceType, color: PieceColor = PieceColor.RED): String {
             return when (type) {
                 PieceType.JU -> "車"
                 PieceType.MA -> "馬"
                 PieceType.XIANG -> "象"
                 PieceType.SHI -> "士"
-                PieceType.JIANG -> if (piece?.color == PieceColor.RED) "帥" else "將"
+                PieceType.JIANG -> if (color == PieceColor.RED) "帥" else "將"
                 PieceType.PAO -> "炮"
                 PieceType.BING -> ""
             }

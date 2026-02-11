@@ -5,8 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,7 +100,7 @@ private fun ChessBoardCanvas(
                         val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragStart(Position(x, y))
                     },
-                    onDragEnd = { offset ->
+                    onDragEnd = { offset: Offset ->
                         val x = ((offset.x - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 8)
                         val y = ((offset.y - 12.dp.toPx()) / cellSize.toPx()).toInt().coerceIn(0, 9)
                         onDragEnd(Position(x, y))

@@ -149,7 +149,7 @@ class ChessBoard {
         // 恢复棋子位置
         val movedPiece = getPieceAt(lastMove.to) ?: return false
         val restoredPiece = movedPiece.withPosition(lastMove.from)
-        _pieces.remove(lastMove.to)
+        _pieces.removeAll { it.position == lastMove.to }
         _pieces.add(restoredPiece)
 
         // 恢复被吃掉的棋子

@@ -22,7 +22,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.chesspro.app.core.chess.*
-import java.util.concurrent.ExecutorService
+import com.chesspro.app.core.recognition.ChessBoardRecognition
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
