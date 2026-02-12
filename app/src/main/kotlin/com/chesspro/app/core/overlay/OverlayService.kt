@@ -9,16 +9,23 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.os.IBinder
+import android.text.TextUtils
 import android.util.Log
+import android.util.TypedValue
 import android.view.*
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.chesspro.app.MainActivity
 import com.chesspro.app.R
 import com.chesspro.app.core.capture.BoardRecognizer
 import com.chesspro.app.core.capture.BoardRect
+import com.chesspro.app.core.capture.RecognizedPiece
 import com.chesspro.app.core.capture.ScreenCaptureService
 import com.chesspro.app.core.engine.AnalysisResult
 import com.chesspro.app.core.engine.EngineState
@@ -27,13 +34,17 @@ import com.chesspro.app.core.engine.PikafishEngine
 import kotlinx.coroutines.*
 
 /**
- * 悬浮窗服务 - 小按钮 + 箭头覆盖 + 自动识别模式
+ * 悬浮窗服务 - Pro象棋风格
  *
- * 核心流程：
- * 1. 显示一个小圆形悬浮按钮（可拖动）
- * 2. 点击按钮 → 截屏 → 识别棋盘 → 引擎分析
- * 3. 在屏幕上画箭头显示最佳走法
- * 4. 自动模式：每隔几秒自动截屏检测变化
+ * 悬浮窗结构：
+ * ┌──────────────────────────────────┐
+ * │ 🔗 Ⓐ ⚙ ✂  单步时长  识别中  📋 ✕ │  ← 工具栏（可拖动）
+ * │ |17 (12) [558k] 兵三进一 炮8平5.. │  ← 分析文字（可滚动）
+ * │ ┌──────────┐                      │
+ * │ │ 迷你棋盘  │                      │  ← 左下迷你棋盘+箭头
+ * │ │ + 箭头    │                ⤡     │  ← 右下缩放手柄
+ * │ └──────────┘                      │
+ * └──────────────────────────────────┘
  */
 class OverlayService : Service() {
 
@@ -45,8 +56,9 @@ class OverlayService : Service() {
         const val ACTION_SHOW = "com.chesspro.app.ACTION_SHOW_OVERLAY"
         const val ACTION_STOP = "com.chesspro.app.ACTION_STOP"
 
-        const val BUTTON_SIZE = 56 // dp
         const val AUTO_INTERVAL_MS = 3000L
+        const val DEFAULT_WIN_W = 340
+        const val DEFAULT_WIN_H = 260
 
         @Volatile
         private var instance: OverlayService? = null
@@ -57,11 +69,14 @@ class OverlayService : Service() {
 
     private var windowManager: WindowManager? = null
 
-    // 小悬浮按钮
-    private var buttonView: View? = null
-    private var buttonParams: WindowManager.LayoutParams? = null
+    // Pro象棋风格悬浮窗
+    private var floatingView: View? = null
+    private var floatingParams: WindowManager.LayoutParams? = null
+    private var miniBoardView: MiniBoardView? = null
+    private var analysisText: TextView? = null
+    private var statusText: TextView? = null
 
-    // 透明箭头覆盖层
+    // 透明箭头覆盖层（画在实际棋盘上）
     private var arrowOverlay: ArrowOverlayView? = null
     private var arrowParams: WindowManager.LayoutParams? = null
 
@@ -79,6 +94,7 @@ class OverlayService : Service() {
     private var lastFen = ""
     private var lastBoardRect: BoardRect? = null
     private var currentBestMove: String? = null
+    private var lastPieces: List<RecognizedPiece> = emptyList()
 
     override fun onCreate() {
         super.onCreate()
@@ -101,7 +117,6 @@ class OverlayService : Service() {
         when (intent?.action) {
             ACTION_SHOW -> {
                 startForeground(NOTIFICATION_ID, createNotification())
-                // 在前台服务启动后初始化截屏（Android 14要求）
                 screenCapture?.initialize()
                 // 初始化并启动引擎
                 serviceScope.launch {
@@ -109,11 +124,13 @@ class OverlayService : Service() {
                     if (ok) {
                         engine?.start()
                         Log.i(TAG, "引擎启动完成")
+                        statusText?.text = "就绪"
                     } else {
-                        Log.e(TAG, "引擎初始化失败（可能缺少引擎文件）")
+                        Log.e(TAG, "引擎初始化失败")
+                        statusText?.text = "引擎缺失"
                     }
                 }
-                showButton()
+                showFloatingWindow()
                 showArrowOverlay()
             }
             ACTION_STOP -> {
@@ -137,19 +154,20 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
-    // ====== 小悬浮按钮 ======
+    // ====== Pro象棋风格悬浮窗 ======
 
-    private fun showButton() {
-        if (buttonView != null) return
+    private fun showFloatingWindow() {
+        if (floatingView != null) return
 
-        val sizePx = dpToPx(BUTTON_SIZE)
         val metrics = resources.displayMetrics
+        val winW = dpToPx(DEFAULT_WIN_W)
+        val winH = dpToPx(DEFAULT_WIN_H)
 
-        buttonParams = WindowManager.LayoutParams().apply {
-            width = sizePx
-            height = sizePx
-            x = metrics.widthPixels - sizePx - dpToPx(16)
-            y = metrics.heightPixels / 3
+        floatingParams = WindowManager.LayoutParams().apply {
+            width = winW
+            height = winH
+            x = 0
+            y = metrics.heightPixels - winH - dpToPx(80)
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -157,82 +175,185 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
         }
 
-        // 创建圆形按钮
-        val button = FrameLayout(this).apply {
-            val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(Color.argb(230, 230, 168, 23)) // 金色
-                setStroke(dpToPx(2), Color.WHITE)
-            }
-            background = bgDrawable
-
-            // 图标
-            val icon = ImageView(this@OverlayService).apply {
-                setImageResource(android.R.drawable.ic_media_play)
-                setColorFilter(Color.WHITE)
-                val pad = dpToPx(14)
-                setPadding(pad, pad, pad, pad)
-            }
-            addView(icon, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            ))
-        }
-
-        setupButtonGestures(button)
-        buttonView = button
+        val rootLayout = buildFloatingLayout()
+        floatingView = rootLayout
 
         try {
-            windowManager?.addView(button, buttonParams)
+            windowManager?.addView(rootLayout, floatingParams)
         } catch (e: Exception) {
-            Log.e(TAG, "显示按钮失败", e)
+            Log.e(TAG, "显示悬浮窗失败", e)
         }
     }
 
-    private fun setupButtonGestures(view: View) {
+    /**
+     * 构建Pro象棋风格悬浮窗布局
+     */
+    private fun buildFloatingLayout(): FrameLayout {
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(240, 50, 50, 60))
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // === 顶部工具栏 ===
+        val toolbar = buildToolbar()
+        content.addView(toolbar)
+
+        // === 分析文字行 ===
+        val scrollView = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dpToPx(4), 0, dpToPx(4), 0) }
+        }
+        analysisText = TextView(this).apply {
+            text = "等待识别..."
+            setTextColor(Color.rgb(200, 200, 200))
+            textSize = 12f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MARQUEE
+            setPadding(dpToPx(8), dpToPx(2), dpToPx(8), dpToPx(2))
+            setBackgroundColor(Color.argb(40, 255, 255, 255))
+        }
+        scrollView.addView(analysisText)
+        content.addView(scrollView)
+
+        // === 底部: 迷你棋盘 ===
+        val miniBoard = MiniBoardView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            ).apply { setMargins(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4)) }
+        }
+        miniBoardView = miniBoard
+        content.addView(miniBoard)
+
+        root.addView(content)
+
+        // === 右下角缩放手柄 ===
+        val resizeHandle = View(this).apply {
+            setBackgroundColor(Color.argb(80, 255, 255, 255))
+            layoutParams = FrameLayout.LayoutParams(dpToPx(20), dpToPx(20)).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+            }
+        }
+        setupResizeGesture(resizeHandle)
+        root.addView(resizeHandle)
+
+        // 拖动手势设在toolbar上
+        return root
+    }
+
+    /**
+     * 顶部工具栏 - 图标 + 状态 + 关闭
+     */
+    private fun buildToolbar(): LinearLayout {
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.argb(200, 40, 40, 50))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(6), dpToPx(2), dpToPx(6), dpToPx(2))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // 链接图标（切换自动模式）
+        val autoIcon = makeToolbarIcon(android.R.drawable.ic_menu_share) {
+            toggleAutoMode()
+        }
+        toolbar.addView(autoIcon)
+
+        // A 识别按钮
+        val recognizeBtn = TextView(this).apply {
+            text = "Ⓐ"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(dpToPx(6), 0, dpToPx(6), 0)
+            setOnClickListener { onRecognizeClick() }
+        }
+        toolbar.addView(recognizeBtn)
+
+        // 分隔
+        val spacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+        toolbar.addView(spacer)
+
+        // 单步时长文字
+        val stepLabel = TextView(this).apply {
+            text = "单步时长"
+            setTextColor(Color.rgb(230, 168, 23))
+            textSize = 11f
+            setPadding(dpToPx(4), 0, dpToPx(4), 0)
+        }
+        toolbar.addView(stepLabel)
+
+        // 状态标签
+        statusText = TextView(this).apply {
+            text = "就绪"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(120, 38, 198, 176))
+            textSize = 10f
+            setPadding(dpToPx(6), dpToPx(1), dpToPx(6), dpToPx(1))
+        }
+        toolbar.addView(statusText)
+
+        // 关闭按钮
+        val closeBtn = makeToolbarIcon(android.R.drawable.ic_menu_close_clear_cancel) {
+            val intent = Intent(this, OverlayService::class.java).apply { action = ACTION_STOP }
+            startService(intent)
+        }
+        toolbar.addView(closeBtn)
+
+        // 设置拖动
+        setupDragGesture(toolbar)
+
+        return toolbar
+    }
+
+    private fun makeToolbarIcon(resId: Int, onClick: () -> Unit): ImageView {
+        return ImageView(this).apply {
+            setImageResource(resId)
+            setColorFilter(Color.WHITE)
+            val pad = dpToPx(4)
+            setPadding(pad, pad, pad, pad)
+            layoutParams = LinearLayout.LayoutParams(dpToPx(28), dpToPx(28))
+            setOnClickListener { onClick() }
+        }
+    }
+
+    // ====== 手势 ======
+
+    private fun setupDragGesture(view: View) {
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
-        var isDragging = false
-        var downTime = 0L
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = buttonParams?.x ?: 0
-                    initialY = buttonParams?.y ?: 0
+                    initialX = floatingParams?.x ?: 0
+                    initialY = floatingParams?.y ?: 0
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
-                    isDragging = false
-                    downTime = System.currentTimeMillis()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - initialTouchX
-                    val dy = event.rawY - initialTouchY
-                    if (dx * dx + dy * dy > 100) {
-                        isDragging = true
-                        buttonParams?.let { params ->
-                            params.x = initialX + dx.toInt()
-                            params.y = initialY + dy.toInt()
-                            try {
-                                windowManager?.updateViewLayout(buttonView, params)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    val elapsed = System.currentTimeMillis() - downTime
-                    if (!isDragging) {
-                        if (elapsed < 500) {
-                            // 短按 = 单次识别
-                            onButtonClick()
-                        } else {
-                            // 长按 = 切换自动模式
-                            onButtonLongClick()
-                        }
+                    floatingParams?.let { params ->
+                        params.x = initialX + (event.rawX - initialTouchX).toInt()
+                        params.y = initialY + (event.rawY - initialTouchY).toInt()
+                        try {
+                            windowManager?.updateViewLayout(floatingView, params)
+                        } catch (_: Exception) {}
                     }
                     true
                 }
@@ -241,42 +362,62 @@ class OverlayService : Service() {
         }
     }
 
-    private fun onButtonClick() {
+    private fun setupResizeGesture(view: View) {
+        var initialW = 0
+        var initialH = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialW = floatingParams?.width ?: 0
+                    initialH = floatingParams?.height ?: 0
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    floatingParams?.let { params ->
+                        params.width = (initialW + (event.rawX - initialTouchX).toInt())
+                            .coerceIn(dpToPx(200), dpToPx(500))
+                        params.height = (initialH + (event.rawY - initialTouchY).toInt())
+                            .coerceIn(dpToPx(150), dpToPx(500))
+                        try {
+                            windowManager?.updateViewLayout(floatingView, params)
+                        } catch (_: Exception) {}
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    // ====== 操作 ======
+
+    private fun onRecognizeClick() {
         if (isAnalyzing) return
         captureAndAnalyze()
     }
 
-    private fun onButtonLongClick() {
+    private fun toggleAutoMode() {
         if (isAutoMode) {
             stopAutoMode()
-            updateButtonColor(false)
-            arrowOverlay?.setHint("自动模式已关闭")
-            serviceScope.launch {
-                delay(2000)
-                arrowOverlay?.setHint(null)
-            }
+            statusText?.text = "已停止"
+            statusText?.setBackgroundColor(Color.argb(120, 150, 150, 150))
         } else {
             startAutoMode()
-            updateButtonColor(true)
-            arrowOverlay?.setHint("自动模式已开启")
+            statusText?.text = "识别中"
+            statusText?.setBackgroundColor(Color.argb(120, 38, 198, 176))
         }
     }
 
-    private fun updateButtonColor(auto: Boolean) {
-        val bg = (buttonView as? FrameLayout)?.background as? android.graphics.drawable.GradientDrawable
-        if (auto) {
-            bg?.setColor(Color.argb(230, 76, 175, 80)) // 绿色=自动模式
-        } else {
-            bg?.setColor(Color.argb(230, 230, 168, 23)) // 金色=手动模式
-        }
-    }
-
-    // ====== 透明箭头覆盖层 ======
+    // ====== 透明箭头覆盖层（画在实际棋盘上） ======
 
     private fun showArrowOverlay() {
         if (arrowOverlay != null) return
 
-        val metrics = resources.displayMetrics
         arrowParams = WindowManager.LayoutParams().apply {
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
@@ -298,12 +439,8 @@ class OverlayService : Service() {
         }
     }
 
-    /**
-     * 在屏幕上画箭头
-     */
     private fun drawArrow(uciMove: String, boardRect: BoardRect) {
         val positions = FenConverter.uciMoveToPositions(uciMove) ?: return
-
         val (from, to) = positions
         val boardW = boardRect.right - boardRect.left
         val boardH = boardRect.bottom - boardRect.top
@@ -315,12 +452,10 @@ class OverlayService : Service() {
         val toX = boardRect.left + to.x * cellW
         val toY = boardRect.top + to.y * cellH
 
-        val radius = minOf(cellW, cellH) * 0.35f
-
         arrowOverlay?.setArrow(
             PointF(fromX, fromY),
             PointF(toX, toY),
-            radius
+            minOf(cellW, cellH) * 0.35f
         )
     }
 
@@ -348,22 +483,25 @@ class OverlayService : Service() {
 
     private fun captureAndAnalyze() {
         if (!ScreenCaptureService.hasPermission()) {
-            arrowOverlay?.setHint("需要屏幕录制权限")
+            statusText?.text = "无权限"
             return
         }
         if (isAnalyzing) return
         isAnalyzing = true
+        statusText?.text = "识别中"
+        statusText?.setBackgroundColor(Color.argb(120, 38, 198, 176))
 
         serviceScope.launch {
-            // 隐藏按钮和箭头，避免截到自己
-            buttonView?.visibility = View.INVISIBLE
+            // 隐藏悬浮窗和箭头，避免截到自己
+            floatingView?.visibility = View.INVISIBLE
             arrowOverlay?.visibility = View.INVISIBLE
             delay(150)
 
             try {
                 val bitmap = screenCapture?.captureScreen()
                 if (bitmap == null) {
-                    arrowOverlay?.setHint("截屏失败")
+                    analysisText?.text = "截屏失败"
+                    statusText?.text = "失败"
                     isAnalyzing = false
                     return@launch
                 }
@@ -375,17 +513,14 @@ class OverlayService : Service() {
 
                 if (result == null || result.pieces.isEmpty()) {
                     if (!isAutoMode) {
-                        arrowOverlay?.setHint("未识别到棋盘")
-                        serviceScope.launch {
-                            delay(2000)
-                            arrowOverlay?.setHint(null)
-                        }
+                        analysisText?.text = "未识别到棋盘"
+                        statusText?.text = "未识别"
                     }
                     isAnalyzing = false
                     return@launch
                 }
 
-                // 检查棋盘是否变化（自动模式下避免重复分析）
+                // 自动模式下避免重复分析
                 if (isAutoMode && result.fen == lastFen) {
                     isAnalyzing = false
                     return@launch
@@ -393,80 +528,82 @@ class OverlayService : Service() {
 
                 lastFen = result.fen
                 lastBoardRect = result.boardRect
+                lastPieces = result.pieces
+
+                // 更新迷你棋盘
+                miniBoardView?.updateBoard(result.pieces, null)
+                analysisText?.text = "识别${result.pieces.size}子，分析中..."
 
                 arrowOverlay?.setArrow(null, null)
 
-                // 检查引擎状态
+                // 检查引擎
                 val engineOk = engine?.engineState?.value
                 if (engineOk == null || engineOk == EngineState.ERROR || engineOk == EngineState.IDLE) {
-                    arrowOverlay?.setHint("引擎未就绪，识别${result.pieces.size}子 FEN已生成")
+                    analysisText?.text = "识别${result.pieces.size}子 | 引擎未就绪"
+                    statusText?.text = "引擎缺失"
+                    statusText?.setBackgroundColor(Color.argb(120, 200, 50, 50))
                     Log.w(TAG, "Engine not ready: $engineOk, FEN: ${result.fen}")
-                    // 5秒后清除提示
-                    serviceScope.launch {
-                        delay(5000)
-                        arrowOverlay?.setHint(null)
-                    }
                     isAnalyzing = false
                     return@launch
                 }
 
-                arrowOverlay?.setHint("分析中...")
-
-                // 发送给引擎分析（带超时）
+                statusText?.text = "分析中"
                 engine?.analyze(result.fen)
 
-                // 超时保护 - 10秒没结果就放弃
+                // 超时保护
                 serviceScope.launch {
                     delay(10000)
                     if (isAnalyzing) {
-                        Log.w(TAG, "分析超时，强制停止")
                         engine?.stopAnalysis()
-                        arrowOverlay?.setHint("分析超时")
+                        statusText?.text = "超时"
                         isAnalyzing = false
-                        delay(2000)
-                        arrowOverlay?.setHint(null)
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "截图分析失败", e)
-                arrowOverlay?.setHint("识别失败: ${e.message}")
+                analysisText?.text = "错误: ${e.message}"
                 isAnalyzing = false
             } finally {
-                buttonView?.visibility = View.VISIBLE
+                floatingView?.visibility = View.VISIBLE
                 arrowOverlay?.visibility = View.VISIBLE
             }
         }
     }
 
     /**
-     * 处理引擎分析结果 - 画箭头
+     * 处理引擎分析结果
      */
     private fun handleAnalysisResult(result: AnalysisResult) {
         if (result.bestMove != null && !result.isAnalyzing) {
             currentBestMove = result.bestMove
             isAnalyzing = false
 
-            // 在棋盘上画箭头
-            val boardRect = lastBoardRect
-            if (boardRect != null) {
-                drawArrow(result.bestMove, boardRect)
-            }
-
-            // 显示简短提示
+            // 构建Pro象棋风格的分析文字
             val notation = buildNotation(result.bestMove)
-            arrowOverlay?.setHint("$notation  ${result.scoreDisplay}")
+            val pvText = result.pvMoves.take(6).joinToString(" ") { buildNotation(it) }
 
-            // 几秒后隐藏文字提示（箭头保留）
-            serviceScope.launch {
-                delay(3000)
-                arrowOverlay?.setHint(null)
-            }
+            analysisText?.text = "|${result.depth} (${result.scoreDisplay}) [${result.nodes / 1000}k] $notation $pvText"
+
+            // 更新状态
+            statusText?.text = "d${result.depth}"
+            statusText?.setBackgroundColor(Color.argb(120, 76, 175, 80))
+
+            // 在实际棋盘上画箭头
+            lastBoardRect?.let { drawArrow(result.bestMove, it) }
+
+            // 更新迷你棋盘箭头
+            miniBoardView?.updateBoard(lastPieces, result.bestMove)
+
         } else if (result.isAnalyzing && result.depth > 0) {
-            arrowOverlay?.setHint("d${result.depth} ${result.scoreDisplay}")
+            // 实时更新分析进度
+            val pvText = result.pvMoves.take(4).joinToString(" ") { buildNotation(it) }
+            analysisText?.text = "|${result.depth} (${result.scoreDisplay}) [${result.nodes / 1000}k] $pvText"
+            statusText?.text = "d${result.depth}"
         }
     }
 
     private fun buildNotation(uciMove: String): String {
+        if (uciMove.length < 4) return uciMove
         val positions = FenConverter.uciMoveToPositions(uciMove) ?: return uciMove
         val (from, to) = positions
         if (lastFen.isNotEmpty()) {
@@ -484,9 +621,9 @@ class OverlayService : Service() {
     // ====== 清理 ======
 
     private fun hideAll() {
-        buttonView?.let {
+        floatingView?.let {
             try { windowManager?.removeView(it) } catch (_: Exception) {}
-            buttonView = null
+            floatingView = null
         }
         arrowOverlay?.let {
             try { windowManager?.removeView(it) } catch (_: Exception) {}
