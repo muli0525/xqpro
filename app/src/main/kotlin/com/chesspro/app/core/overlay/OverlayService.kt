@@ -6,34 +6,33 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PointF
 import android.graphics.PixelFormat
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.platform.ComposeView
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.core.app.NotificationCompat
-import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.chesspro.app.MainActivity
 import com.chesspro.app.R
 import com.chesspro.app.core.capture.BoardRecognizer
+import com.chesspro.app.core.capture.BoardRect
 import com.chesspro.app.core.capture.ScreenCaptureService
 import com.chesspro.app.core.engine.AnalysisResult
-import com.chesspro.app.core.engine.EngineState
 import com.chesspro.app.core.engine.FenConverter
 import com.chesspro.app.core.engine.PikafishEngine
-import com.chesspro.app.ui.theme.ChineseChessProTheme
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 悬浮窗服务
- * 提供可移动、可调整大小的象棋分析悬浮窗
- * 连接Pikafish引擎进行实时分析
+ * 悬浮窗服务 - 小按钮 + 箭头覆盖 + 自动识别模式
+ *
+ * 核心流程：
+ * 1. 显示一个小圆形悬浮按钮（可拖动）
+ * 2. 点击按钮 → 截屏 → 识别棋盘 → 引擎分析
+ * 3. 在屏幕上画箭头显示最佳走法
+ * 4. 自动模式：每隔几秒自动截屏检测变化
  */
 class OverlayService : Service() {
 
@@ -43,17 +42,10 @@ class OverlayService : Service() {
         const val NOTIFICATION_ID = 1001
 
         const val ACTION_SHOW = "com.chesspro.app.ACTION_SHOW_OVERLAY"
-        const val ACTION_HIDE = "com.chesspro.app.ACTION_HIDE_OVERLAY"
-        const val ACTION_ANALYZE = "com.chesspro.app.ACTION_ANALYZE"
         const val ACTION_STOP = "com.chesspro.app.ACTION_STOP"
-        const val ACTION_UPDATE_FEN = "com.chesspro.app.ACTION_UPDATE_FEN"
-        const val ACTION_CAPTURE = "com.chesspro.app.ACTION_CAPTURE"
 
-        const val EXTRA_FEN = "extra_fen"
-
-        // 默认尺寸
-        const val DEFAULT_WIDTH = 300
-        const val DEFAULT_HEIGHT = 380
+        const val BUTTON_SIZE = 56 // dp
+        const val AUTO_INTERVAL_MS = 3000L
 
         @Volatile
         private var instance: OverlayService? = null
@@ -63,17 +55,29 @@ class OverlayService : Service() {
     }
 
     private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
+
+    // 小悬浮按钮
+    private var buttonView: View? = null
+    private var buttonParams: WindowManager.LayoutParams? = null
+
+    // 透明箭头覆盖层
+    private var arrowOverlay: ArrowOverlayView? = null
+    private var arrowParams: WindowManager.LayoutParams? = null
+
+    // 引擎和截图
     private var engine: PikafishEngine? = null
     private var screenCapture: ScreenCaptureService? = null
     private val boardRecognizer = BoardRecognizer()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // 悬浮窗状态
-    private val _overlayState = MutableStateFlow(OverlayState())
-    val overlayState: StateFlow<OverlayState> = _overlayState.asStateFlow()
+    // 状态
+    private var isAutoMode = false
+    private var autoJob: Job? = null
+    private var isAnalyzing = false
+    private var lastFen = ""
+    private var lastBoardRect: BoardRect? = null
+    private var currentBestMove: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -81,7 +85,6 @@ class OverlayService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
 
-        // 获取引擎实例
         engine = PikafishEngine.getInstance(applicationContext)
         screenCapture = ScreenCaptureService(applicationContext)
 
@@ -91,42 +94,18 @@ class OverlayService : Service() {
                 handleAnalysisResult(result)
             }
         }
-
-        // 监听引擎状态
-        serviceScope.launch {
-            engine?.engineState?.collect { state ->
-                _overlayState.value = _overlayState.value.copy(
-                    engineStatus = when (state) {
-                        EngineState.RUNNING -> "引擎就绪"
-                        EngineState.ANALYZING -> "分析中..."
-                        EngineState.ERROR -> "引擎错误"
-                        else -> "引擎: ${state.name}"
-                    }
-                )
-            }
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_SHOW -> {
                 startForeground(NOTIFICATION_ID, createNotification())
-                showOverlay()
+                showButton()
+                showArrowOverlay()
             }
-            ACTION_HIDE -> hideOverlay()
-            ACTION_ANALYZE -> {
-                val fen = intent.getStringExtra(EXTRA_FEN)
-                if (fen != null) analyzePosition(fen)
-            }
-            ACTION_UPDATE_FEN -> {
-                val fen = intent.getStringExtra(EXTRA_FEN)
-                if (fen != null) {
-                    _overlayState.value = _overlayState.value.copy(currentFen = fen)
-                }
-            }
-            ACTION_CAPTURE -> captureAndAnalyze()
             ACTION_STOP -> {
-                hideOverlay()
+                stopAutoMode()
+                hideAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -137,246 +116,82 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        stopAutoMode()
         serviceScope.cancel()
-        hideOverlay()
+        hideAll()
         instance = null
         super.onDestroy()
     }
 
-    /**
-     * 显示悬浮窗
-     */
-    private fun showOverlay() {
-        if (overlayView != null) return
+    // ====== 小悬浮按钮 ======
 
-        val params = WindowManager.LayoutParams().apply {
-            val metrics = resources.displayMetrics
-            x = metrics.widthPixels / 2 - dpToPx(DEFAULT_WIDTH) / 2
-            y = 100
+    private fun showButton() {
+        if (buttonView != null) return
 
-            width = dpToPx(DEFAULT_WIDTH)
-            height = dpToPx(DEFAULT_HEIGHT)
+        val sizePx = dpToPx(BUTTON_SIZE)
+        val metrics = resources.displayMetrics
 
+        buttonParams = WindowManager.LayoutParams().apply {
+            width = sizePx
+            height = sizePx
+            x = metrics.widthPixels - sizePx - dpToPx(16)
+            y = metrics.heightPixels / 3
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-
             gravity = Gravity.TOP or Gravity.START
         }
-        layoutParams = params
 
-        val lifecycleOwner = OverlayLifecycleOwner()
-        lifecycleOwner.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_CREATE)
-        lifecycleOwner.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_START)
-        lifecycleOwner.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_RESUME)
-
-        overlayView = ComposeView(this).apply {
-            setViewTreeLifecycleOwner(lifecycleOwner)
-            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
-
-            setContent {
-                val state by _overlayState.collectAsState()
-                ChineseChessProTheme {
-                    OverlayContent(
-                        state = state,
-                        onClose = {
-                            hideOverlay()
-                            stopForeground(STOP_FOREGROUND_REMOVE)
-                            stopSelf()
-                        },
-                        onAnalyze = { captureAndAnalyze() },
-                        onMoveClick = { move -> applyMove(move) },
-                        onResize = { w, h -> resizeOverlay(w, h) },
-                        onDrag = { x, y -> moveOverlay(x, y) }
-                    )
-                }
+        // 创建圆形按钮
+        val button = FrameLayout(this).apply {
+            val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.argb(230, 230, 168, 23)) // 金色
+                setStroke(dpToPx(2), Color.WHITE)
             }
+            background = bgDrawable
+
+            // 图标
+            val icon = ImageView(this@OverlayService).apply {
+                setImageResource(android.R.drawable.ic_media_play)
+                setColorFilter(Color.WHITE)
+                val pad = dpToPx(14)
+                setPadding(pad, pad, pad, pad)
+            }
+            addView(icon, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
         }
 
-        setupGestures(overlayView!!)
+        setupButtonGestures(button)
+        buttonView = button
 
         try {
-            windowManager?.addView(overlayView, params)
-            _overlayState.value = _overlayState.value.copy(isVisible = true)
+            windowManager?.addView(button, buttonParams)
         } catch (e: Exception) {
-            Log.e(TAG, "显示悬浮窗失败", e)
+            Log.e(TAG, "显示按钮失败", e)
         }
     }
 
-    /**
-     * 隐藏悬浮窗
-     */
-    private fun hideOverlay() {
-        overlayView?.let { view ->
-            try {
-                windowManager?.removeView(view)
-            } catch (e: Exception) {
-                Log.e(TAG, "隐藏悬浮窗失败", e)
-            }
-            overlayView = null
-        }
-        _overlayState.value = _overlayState.value.copy(isVisible = false)
-    }
-
-    /**
-     * 截图 -> 识别棋盘 -> 引擎分析 一体化流程
-     */
-    private fun captureAndAnalyze() {
-        if (!ScreenCaptureService.hasPermission()) {
-            _overlayState.value = _overlayState.value.copy(
-                analysisStatus = "需要屏幕录制权限，请返回APP授权"
-            )
-            return
-        }
-
-        serviceScope.launch {
-            _overlayState.value = _overlayState.value.copy(
-                isAnalyzing = true,
-                analysisStatus = "截屏中..."
-            )
-
-            // 先隐藏悬浮窗，避免截到自己
-            val wasVisible = overlayView != null
-            if (wasVisible) {
-                overlayView?.let { it.visibility = View.INVISIBLE }
-                delay(200)
-            }
-
-            try {
-                val bitmap = screenCapture?.captureScreen()
-                if (bitmap == null) {
-                    _overlayState.value = _overlayState.value.copy(
-                        isAnalyzing = false,
-                        analysisStatus = "截屏失败"
-                    )
-                    return@launch
-                }
-
-                _overlayState.value = _overlayState.value.copy(analysisStatus = "识别中...")
-
-                val result = withContext(Dispatchers.Default) {
-                    boardRecognizer.recognize(bitmap)
-                }
-                bitmap.recycle()
-
-                if (result == null || result.pieces.isEmpty()) {
-                    _overlayState.value = _overlayState.value.copy(
-                        isAnalyzing = false,
-                        analysisStatus = "未识别到棋盘，请确保屏幕上有棋盘"
-                    )
-                    return@launch
-                }
-
-                _overlayState.value = _overlayState.value.copy(
-                    analysisStatus = "识别到${result.pieces.size}个棋子，分析中...",
-                    currentFen = result.fen
-                )
-
-                // 发送给引擎分析
-                analyzePosition(result.fen)
-            } catch (e: Exception) {
-                Log.e(TAG, "截图分析失败", e)
-                _overlayState.value = _overlayState.value.copy(
-                    isAnalyzing = false,
-                    analysisStatus = "识别失败: ${e.message}"
-                )
-            } finally {
-                if (wasVisible) {
-                    overlayView?.let { it.visibility = View.VISIBLE }
-                }
-            }
-        }
-    }
-
-    /**
-     * 使用Pikafish分析局面
-     */
-    private fun analyzePosition(fen: String) {
-        _overlayState.value = _overlayState.value.copy(
-            isAnalyzing = true,
-            analysisStatus = "分析中...",
-            currentFen = fen
-        )
-        engine?.analyze(fen)
-    }
-
-    /**
-     * 处理引擎分析结果
-     */
-    private fun handleAnalysisResult(result: AnalysisResult) {
-        if (result.bestMove != null && !result.isAnalyzing) {
-            val bestUci = result.bestMove
-            val positions = FenConverter.uciMoveToPositions(bestUci)
-
-            val notation = if (positions != null) {
-                val (from, to) = positions
-                // 尝试从FEN获取棋子信息来生成中文记谱
-                val fen = _overlayState.value.currentFen
-                if (fen.isNotEmpty()) {
-                    val (pieces, _) = FenConverter.fenToBoard(fen)
-                    val piece = pieces.find { it.position == from }
-                    if (piece != null) {
-                        FenConverter.moveToChineseNotation(piece.type, piece.color, from, to)
-                    } else bestUci
-                } else bestUci
-            } else bestUci
-
-            val moves = mutableListOf(
-                SuggestedMove(notation, result.score, bestUci)
-            )
-
-            // 添加PV中的后续走法
-            if (result.pvMoves.size > 1) {
-                result.pvMoves.drop(1).take(2).forEachIndexed { idx, uci ->
-                    moves.add(SuggestedMove("后续: $uci", 0, uci))
-                }
-            }
-
-            _overlayState.value = _overlayState.value.copy(
-                isAnalyzing = false,
-                analysisStatus = "分析完成 (d${result.depth})",
-                bestMoves = moves,
-                evaluation = result.scoreDisplay,
-                lastMove = notation
-            )
-        } else if (result.isAnalyzing && result.depth > 0) {
-            // 更新中间状态
-            _overlayState.value = _overlayState.value.copy(
-                analysisStatus = "分析中... d${result.depth}",
-                evaluation = result.scoreDisplay
-            )
-        }
-    }
-
-    /**
-     * 应用走法
-     */
-    private fun applyMove(move: SuggestedMove) {
-        _overlayState.value = _overlayState.value.copy(
-            lastMove = move.notation,
-            analysisStatus = "已选择: ${move.notation}"
-        )
-    }
-
-    /**
-     * 手势处理
-     */
-    private fun setupGestures(view: View) {
+    private fun setupButtonGestures(view: View) {
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
+        var downTime = 0L
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = layoutParams?.x ?: 0
-                    initialY = layoutParams?.y ?: 0
+                    initialX = buttonParams?.x ?: 0
+                    initialY = buttonParams?.y ?: 0
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    downTime = System.currentTimeMillis()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -384,51 +199,256 @@ class OverlayService : Service() {
                     val dy = event.rawY - initialTouchY
                     if (dx * dx + dy * dy > 100) {
                         isDragging = true
-                        moveOverlay(initialX + dx.toInt(), initialY + dy.toInt())
+                        buttonParams?.let { params ->
+                            params.x = initialX + dx.toInt()
+                            params.y = initialY + dy.toInt()
+                            try {
+                                windowManager?.updateViewLayout(buttonView, params)
+                            } catch (_: Exception) {}
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    val elapsed = System.currentTimeMillis() - downTime
                     if (!isDragging) {
-                        // 单击 - 不做特殊处理，交给Compose
-                        false
-                    } else {
-                        true
+                        if (elapsed < 500) {
+                            // 短按 = 单次识别
+                            onButtonClick()
+                        } else {
+                            // 长按 = 切换自动模式
+                            onButtonLongClick()
+                        }
                     }
+                    true
                 }
                 else -> false
             }
         }
     }
 
+    private fun onButtonClick() {
+        if (isAnalyzing) return
+        captureAndAnalyze()
+    }
+
+    private fun onButtonLongClick() {
+        if (isAutoMode) {
+            stopAutoMode()
+            updateButtonColor(false)
+            arrowOverlay?.setHint("自动模式已关闭")
+            serviceScope.launch {
+                delay(2000)
+                arrowOverlay?.setHint(null)
+            }
+        } else {
+            startAutoMode()
+            updateButtonColor(true)
+            arrowOverlay?.setHint("自动模式已开启")
+        }
+    }
+
+    private fun updateButtonColor(auto: Boolean) {
+        val bg = (buttonView as? FrameLayout)?.background as? android.graphics.drawable.GradientDrawable
+        if (auto) {
+            bg?.setColor(Color.argb(230, 76, 175, 80)) // 绿色=自动模式
+        } else {
+            bg?.setColor(Color.argb(230, 230, 168, 23)) // 金色=手动模式
+        }
+    }
+
+    // ====== 透明箭头覆盖层 ======
+
+    private fun showArrowOverlay() {
+        if (arrowOverlay != null) return
+
+        val metrics = resources.displayMetrics
+        arrowParams = WindowManager.LayoutParams().apply {
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
+            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            format = PixelFormat.TRANSLUCENT
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        arrowOverlay = ArrowOverlayView(this)
+
+        try {
+            windowManager?.addView(arrowOverlay, arrowParams)
+        } catch (e: Exception) {
+            Log.e(TAG, "显示箭头覆盖层失败", e)
+        }
+    }
+
     /**
-     * 移动悬浮窗
+     * 在屏幕上画箭头
      */
-    private fun moveOverlay(x: Int, y: Int) {
-        layoutParams?.let { params ->
-            params.x = x
-            params.y = y
+    private fun drawArrow(uciMove: String, boardRect: BoardRect) {
+        val positions = FenConverter.uciMoveToPositions(uciMove) ?: return
+
+        val (from, to) = positions
+        val boardW = boardRect.right - boardRect.left
+        val boardH = boardRect.bottom - boardRect.top
+        val cellW = boardW.toFloat() / 8f
+        val cellH = boardH.toFloat() / 9f
+
+        val fromX = boardRect.left + from.x * cellW
+        val fromY = boardRect.top + from.y * cellH
+        val toX = boardRect.left + to.x * cellW
+        val toY = boardRect.top + to.y * cellH
+
+        val radius = minOf(cellW, cellH) * 0.35f
+
+        arrowOverlay?.setArrow(
+            PointF(fromX, fromY),
+            PointF(toX, toY),
+            radius
+        )
+    }
+
+    // ====== 自动模式 ======
+
+    private fun startAutoMode() {
+        isAutoMode = true
+        autoJob = serviceScope.launch {
+            while (isActive && isAutoMode) {
+                if (!isAnalyzing) {
+                    captureAndAnalyze()
+                }
+                delay(AUTO_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopAutoMode() {
+        isAutoMode = false
+        autoJob?.cancel()
+        autoJob = null
+    }
+
+    // ====== 截图+识别+分析 ======
+
+    private fun captureAndAnalyze() {
+        if (!ScreenCaptureService.hasPermission()) {
+            arrowOverlay?.setHint("需要屏幕录制权限")
+            return
+        }
+        if (isAnalyzing) return
+        isAnalyzing = true
+
+        serviceScope.launch {
+            // 隐藏按钮和箭头，避免截到自己
+            buttonView?.visibility = View.INVISIBLE
+            arrowOverlay?.visibility = View.INVISIBLE
+            delay(150)
+
             try {
-                windowManager?.updateViewLayout(overlayView, params)
+                val bitmap = screenCapture?.captureScreen()
+                if (bitmap == null) {
+                    arrowOverlay?.setHint("截屏失败")
+                    isAnalyzing = false
+                    return@launch
+                }
+
+                val result = withContext(Dispatchers.Default) {
+                    boardRecognizer.recognize(bitmap)
+                }
+                bitmap.recycle()
+
+                if (result == null || result.pieces.isEmpty()) {
+                    if (!isAutoMode) {
+                        arrowOverlay?.setHint("未识别到棋盘")
+                        serviceScope.launch {
+                            delay(2000)
+                            arrowOverlay?.setHint(null)
+                        }
+                    }
+                    isAnalyzing = false
+                    return@launch
+                }
+
+                // 检查棋盘是否变化（自动模式下避免重复分析）
+                if (isAutoMode && result.fen == lastFen) {
+                    isAnalyzing = false
+                    return@launch
+                }
+
+                lastFen = result.fen
+                lastBoardRect = result.boardRect
+
+                arrowOverlay?.setHint("分析中...")
+                arrowOverlay?.setArrow(null, null)
+
+                // 发送给引擎分析
+                engine?.analyze(result.fen)
             } catch (e: Exception) {
-                Log.e(TAG, "移动悬浮窗失败", e)
+                Log.e(TAG, "截图分析失败", e)
+                arrowOverlay?.setHint("识别失败")
+                isAnalyzing = false
+            } finally {
+                buttonView?.visibility = View.VISIBLE
+                arrowOverlay?.visibility = View.VISIBLE
             }
         }
     }
 
     /**
-     * 调整悬浮窗大小
+     * 处理引擎分析结果 - 画箭头
      */
-    private fun resizeOverlay(width: Int, height: Int) {
-        layoutParams?.let { params ->
-            params.width = dpToPx(width)
-            params.height = dpToPx(height)
-            try {
-                windowManager?.updateViewLayout(overlayView, params)
-                _overlayState.value = _overlayState.value.copy(width = width, height = height)
-            } catch (e: Exception) {
-                Log.e(TAG, "调整悬浮窗大小失败", e)
+    private fun handleAnalysisResult(result: AnalysisResult) {
+        if (result.bestMove != null && !result.isAnalyzing) {
+            currentBestMove = result.bestMove
+            isAnalyzing = false
+
+            // 在棋盘上画箭头
+            val boardRect = lastBoardRect
+            if (boardRect != null) {
+                drawArrow(result.bestMove, boardRect)
             }
+
+            // 显示简短提示
+            val notation = buildNotation(result.bestMove)
+            arrowOverlay?.setHint("$notation  ${result.scoreDisplay}")
+
+            // 几秒后隐藏文字提示（箭头保留）
+            serviceScope.launch {
+                delay(3000)
+                arrowOverlay?.setHint(null)
+            }
+        } else if (result.isAnalyzing && result.depth > 0) {
+            arrowOverlay?.setHint("d${result.depth} ${result.scoreDisplay}")
+        }
+    }
+
+    private fun buildNotation(uciMove: String): String {
+        val positions = FenConverter.uciMoveToPositions(uciMove) ?: return uciMove
+        val (from, to) = positions
+        if (lastFen.isNotEmpty()) {
+            try {
+                val (pieces, _) = FenConverter.fenToBoard(lastFen)
+                val piece = pieces.find { it.position == from }
+                if (piece != null) {
+                    return FenConverter.moveToChineseNotation(piece.type, piece.color, from, to)
+                }
+            } catch (_: Exception) {}
+        }
+        return uciMove
+    }
+
+    // ====== 清理 ======
+
+    private fun hideAll() {
+        buttonView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            buttonView = null
+        }
+        arrowOverlay?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            arrowOverlay = null
         }
     }
 
@@ -438,15 +458,13 @@ class OverlayService : Service() {
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
-            CHANNEL_ID,
-            "象棋悬浮窗",
+            CHANNEL_ID, "象棋分析",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "象棋AI分析悬浮窗"
+            description = "象棋AI分析服务"
             setShowBadge(false)
         }
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(channel)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
@@ -455,16 +473,14 @@ class OverlayService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
-
         val stopIntent = PendingIntent.getService(
             this, 1,
             Intent(this, OverlayService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_IMMUTABLE
         )
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("象棋 Pro")
-            .setContentText("悬浮窗运行中 - Pikafish引擎")
+            .setContentText("Pikafish引擎运行中")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_launcher_foreground, "关闭", stopIntent)
@@ -474,33 +490,16 @@ class OverlayService : Service() {
 }
 
 /**
- * 悬浮窗生命周期管理
+ * 建议走法
  */
-class OverlayLifecycleOwner :
-    androidx.lifecycle.LifecycleOwner,
-    androidx.savedstate.SavedStateRegistryOwner {
-
-    private val lifecycleRegistry = androidx.lifecycle.LifecycleRegistry(this)
-    private val savedStateRegistryController =
-        androidx.savedstate.SavedStateRegistryController.create(this)
-
-    override val lifecycle: androidx.lifecycle.Lifecycle
-        get() = lifecycleRegistry
-
-    override val savedStateRegistry: androidx.savedstate.SavedStateRegistry
-        get() = savedStateRegistryController.savedStateRegistry
-
-    fun handleLifecycleEvent(event: androidx.lifecycle.Lifecycle.Event) {
-        lifecycleRegistry.handleLifecycleEvent(event)
-    }
-
-    init {
-        savedStateRegistryController.performRestore(null)
-    }
-}
+data class SuggestedMove(
+    val notation: String,
+    val score: Int,
+    val uciMove: String = ""
+)
 
 /**
- * 悬浮窗状态
+ * 悬浮窗状态（保留兼容性）
  */
 data class OverlayState(
     val isVisible: Boolean = false,
@@ -513,15 +512,6 @@ data class OverlayState(
     val evaluation: String = "0.00",
     val lastMove: String? = null,
     val lastUpdateTime: Long = 0,
-    val width: Int = OverlayService.DEFAULT_WIDTH,
-    val height: Int = OverlayService.DEFAULT_HEIGHT
-)
-
-/**
- * 建议走法
- */
-data class SuggestedMove(
-    val notation: String,
-    val score: Int,
-    val uciMove: String = ""
+    val width: Int = 300,
+    val height: Int = 380
 )
