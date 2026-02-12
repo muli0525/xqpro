@@ -177,162 +177,215 @@ class BoardRecognizer {
 
     /**
      * 找到棋盘区域
-     * 策略：棋盘通常占屏幕中间大部分区域，背景是棕黄色
-     * 扫描找到大面积棕黄色区域的边界
+     * 策略：
+     * 1. 按行扫描，找到连续多行都有大量棕黄色的区域
+     * 2. 精确找到网格线边界
      */
     private fun findBoardRect(bitmap: Bitmap): BoardRect? {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 棋盘颜色范围（棕黄色系）
-        var minX = w
-        var maxX = 0
-        var minY = h
-        var maxY = 0
+        // 逐行统计棋盘色像素数
+        val rowBoardCount = IntArray(h)
+        val step = 3
+        for (y in 0 until h step step) {
+            var count = 0
+            for (x in 0 until w step step) {
+                if (isBoardColor(bitmap.getPixel(x, y))) count++
+            }
+            rowBoardCount[y] = count
+        }
 
-        val sampleStep = 4
-        var boardPixelCount = 0
-
-        for (y in 0 until h step sampleStep) {
-            for (x in 0 until w step sampleStep) {
-                val pixel = bitmap.getPixel(x, y)
-                if (isBoardColor(pixel)) {
-                    boardPixelCount++
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
+        // 找到棋盘的上下边界（连续有大量棋盘色的区域）
+        val threshold = w / step / 4 // 至少1/4宽度是棋盘色
+        var topY = -1
+        var bottomY = -1
+        for (y in 0 until h step step) {
+            if (rowBoardCount[y] > threshold) {
+                if (topY == -1) topY = y
+                bottomY = y
             }
         }
 
-        if (boardPixelCount < 100) return null
+        if (topY == -1 || bottomY - topY < h * 0.15f) {
+            Log.w(TAG, "Board area not found (topY=$topY bottomY=$bottomY)")
+            return null
+        }
 
-        // 棋盘区域应该是方形比例约 8:9 (宽:高)
-        val boardW = maxX - minX
-        val boardH = maxY - minY
+        // 逐列统计，找左右边界
+        var leftX = w
+        var rightX = 0
+        for (x in 0 until w step step) {
+            var count = 0
+            for (y in topY..bottomY step step) {
+                if (isBoardColor(bitmap.getPixel(x, y))) count++
+            }
+            if (count > (bottomY - topY) / step / 4) {
+                if (x < leftX) leftX = x
+                rightX = x
+            }
+        }
 
-        if (boardW < w * 0.3f || boardH < h * 0.2f) return null
+        if (rightX - leftX < w * 0.3f) {
+            Log.w(TAG, "Board too narrow: ${rightX - leftX}")
+            return null
+        }
 
-        // 调整边界 - 内缩一点以排除边框
-        val inset = (boardW * 0.02f).toInt()
-        val cellW = (boardW - inset * 2).toFloat() / (COLS - 1)
-        val cellH = cellW * 1.0f // 假设格子近似正方形
+        // 内缩去掉边框
+        val boardW = rightX - leftX
+        val boardH = bottomY - topY
+        val insetX = (boardW * 0.03f).toInt()
+        val insetY = (boardH * 0.03f).toInt()
 
-        // 重新计算基于格子大小的棋盘区域
-        val actualH = (cellH * (ROWS - 1)).toInt()
-        val centerY = (minY + maxY) / 2
-        val adjustedTop = centerY - actualH / 2
-        val adjustedBottom = centerY + actualH / 2
+        // 棋盘网格: 9列8间距, 10行9间距
+        // 实际使用检测到的宽高比来计算
+        val gridLeft = leftX + insetX
+        val gridRight = rightX - insetX
+        val gridW = gridRight - gridLeft
+        val cellW = gridW.toFloat() / (COLS - 1)
+
+        // 格子高度 ≈ 格子宽度（中国象棋棋盘近似正方形格子）
+        val cellH = cellW * 1.05f // 天天象棋格子略高
+        val gridH = (cellH * (ROWS - 1)).toInt()
+        val gridCenterY = (topY + bottomY) / 2
+        val gridTop = gridCenterY - gridH / 2
+        val gridBottom = gridCenterY + gridH / 2
+
+        Log.d(TAG, "Board: left=$gridLeft top=$gridTop right=$gridRight bottom=$gridBottom " +
+                "cellW=$cellW cellH=$cellH boardW=$boardW boardH=$boardH")
 
         return BoardRect(
-            left = minX + inset,
-            top = adjustedTop.coerceAtLeast(0),
-            right = maxX - inset,
-            bottom = adjustedBottom.coerceAtMost(h - 1)
+            left = gridLeft,
+            top = gridTop.coerceAtLeast(0),
+            right = gridRight,
+            bottom = gridBottom.coerceAtMost(h - 1)
         )
     }
 
     /**
-     * 判断像素是否为棋盘背景色（棕黄色系）
+     * 判断像素是否为棋盘背景色（天天象棋的木纹棕黄色）
+     * 放宽范围以覆盖不同手机屏幕
      */
     private fun isBoardColor(pixel: Int): Boolean {
         val r = Color.red(pixel)
         val g = Color.green(pixel)
         val b = Color.blue(pixel)
 
-        // 棕黄色：R高，G中高，B较低
-        return r > 150 && g > 120 && b > 60 &&
-                r < 255 && g < 230 && b < 180 &&
+        // 棕黄色/木纹色范围
+        return r in 140..245 && g in 110..210 && b in 50..170 &&
                 r > g && g > b &&
-                (r - b) > 40
+                (r - b) > 30
+    }
+
+    /**
+     * 判断像素是否为棋子体颜色（奶油/米色，比棋盘更亮）
+     */
+    private fun isPieceBodyColor(pixel: Int): Boolean {
+        val r = Color.red(pixel)
+        val g = Color.green(pixel)
+        val b = Color.blue(pixel)
+        val brightness = (r + g + b) / 3
+
+        // 棋子体: 比棋盘更亮的暖色调
+        return brightness > 170 && r > 165 && g > 145 &&
+                (r + g + b) > 520
     }
 
     /**
      * 检测指定位置是否有棋子
-     * 返回 (棋子类型, 棋子颜色) 或 null
+     * 核心改进：使用亮度对比检测棋子体 + 宽松的颜色墨水检测
      */
     private fun detectPieceAt(bitmap: Bitmap, cx: Int, cy: Int, radius: Int): Pair<PieceType, PieceColor>? {
         val w = bitmap.width
         val h = bitmap.height
 
-        var redCount = 0
-        var blackCount = 0
-        var whiteCount = 0
+        var redInkCount = 0
+        var darkInkCount = 0
+        var pieceBodyCount = 0
+        var boardCount = 0
         var totalCount = 0
-        var nonBoardCount = 0
 
-        // 用于字符密度分析的3x3网格
-        val gridInk = IntArray(9) // 3x3 grid ink counts
+        // 3x3网格用于字符密度分析
+        val gridInk = IntArray(9)
         val gridTotal = IntArray(9)
 
-        val sampleRadius = (radius * 0.7f).toInt()
+        val sampleRadius = (radius * 0.75f).toInt()
         for (dy in -sampleRadius..sampleRadius step 2) {
             for (dx in -sampleRadius..sampleRadius step 2) {
+                if (dx * dx + dy * dy > sampleRadius * sampleRadius) continue
                 val x = cx + dx
                 val y = cy + dy
                 if (x < 0 || x >= w || y < 0 || y >= h) continue
-                if (dx * dx + dy * dy > sampleRadius * sampleRadius) continue
 
                 val pixel = bitmap.getPixel(x, y)
                 val r = Color.red(pixel)
                 val g = Color.green(pixel)
                 val b = Color.blue(pixel)
+                val brightness = (r + g + b) / 3
                 totalCount++
 
-                if (!isBoardColor(pixel)) nonBoardCount++
-
-                // 计算网格位置 (0-2)
+                // 网格位置
                 val gx = ((dx + sampleRadius) * 3 / (sampleRadius * 2 + 1)).coerceIn(0, 2)
                 val gy = ((dy + sampleRadius) * 3 / (sampleRadius * 2 + 1)).coerceIn(0, 2)
                 val gi = gy * 3 + gx
                 gridTotal[gi]++
 
-                val isInk: Boolean
-
-                if (r > 160 && g < 80 && b < 80) {
-                    redCount++
-                    isInk = true
-                } else if (r < 80 && g < 80 && b < 80) {
-                    blackCount++
-                    isInk = true
-                } else {
-                    isInk = false
-                    if (r > 220 && g > 220 && b > 200) whiteCount++
+                when {
+                    // 红色墨水 (放宽: r > 120, g < 100, 红色明显高于绿蓝)
+                    r > 120 && g < 110 && b < 110 && (r - g) > 40 -> {
+                        redInkCount++
+                        gridInk[gi]++
+                    }
+                    // 深色墨水 (黑色棋子文字)
+                    brightness < 90 -> {
+                        darkInkCount++
+                        gridInk[gi]++
+                    }
+                    // 棋子体 (奶油色，比棋盘亮)
+                    isPieceBodyColor(pixel) -> {
+                        pieceBodyCount++
+                    }
+                    // 棋盘色
+                    isBoardColor(pixel) -> {
+                        boardCount++
+                    }
                 }
-
-                if (isInk) gridInk[gi]++
             }
         }
 
         if (totalCount == 0) return null
 
-        val nonBoardRatio = nonBoardCount.toFloat() / totalCount
-        if (nonBoardRatio < 0.3f) return null
+        val pieceBodyRatio = pieceBodyCount.toFloat() / totalCount
+        val totalInk = redInkCount + darkInkCount
+        val inkRatio = totalInk.toFloat() / totalCount
+        val boardRatio = boardCount.toFloat() / totalCount
 
-        val isRed = redCount > blackCount && redCount > totalCount * 0.03f
-        val isBlack = blackCount > redCount && blackCount > totalCount * 0.03f
+        // 检测逻辑：
+        // 棋子 = 有大量棋子体颜色(>20%) + 少量墨水(>1.5%) + 棋盘色不多(<50%)
+        // 或者 = 大量墨水(>5%) + 棋盘色不多
+        val hasPieceBody = pieceBodyRatio > 0.15f
+        val hasSignificantInk = totalInk >= 3
+        val notMostlyBoard = boardRatio < 0.55f
 
-        if (!isRed && !isBlack) return null
+        if (!notMostlyBoard) return null
+        if (!hasPieceBody && !hasSignificantInk) return null
+        if (totalInk < 3) return null  // 至少要有一点墨水才能判断颜色
+
+        val isRed = redInkCount > darkInkCount
+        val isBlack = darkInkCount >= redInkCount
 
         val color = if (isRed) PieceColor.RED else PieceColor.BLACK
 
-        // 计算字符密度特征
-        val inkCount = redCount + blackCount
-        val inkRatio = inkCount.toFloat() / totalCount
-
-        // 3x3网格密度
+        // 字符密度分析
         val gridDensity = FloatArray(9) { i ->
             if (gridTotal[i] > 0) gridInk[i].toFloat() / gridTotal[i] else 0f
         }
 
-        // 上半/下半密度比
         val topInk = gridDensity[0] + gridDensity[1] + gridDensity[2]
         val bottomInk = gridDensity[6] + gridDensity[7] + gridDensity[8]
         val midInk = gridDensity[3] + gridDensity[4] + gridDensity[5]
         val centerDensity = gridDensity[4]
 
-        // 左右对称度
         val leftInk = gridDensity[0] + gridDensity[3] + gridDensity[6]
         val rightInk = gridDensity[2] + gridDensity[5] + gridDensity[8]
         val symmetry = 1f - kotlin.math.abs(leftInk - rightInk) / (leftInk + rightInk + 0.001f)

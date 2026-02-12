@@ -33,38 +33,74 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Download Pikafish engine binaries
+      - name: Download and extract Pikafish engine
         run: |
           mkdir -p app/src/main/assets
-          # Download latest Pikafish Android ARM64 binaries
-          PIKAFISH_VERSION="2024-11-15"
-          BASE_URL="https://github.com/official-pikafish/Pikafish/releases/download/${PIKAFISH_VERSION}"
           
-          # Try downloading armv8 binary
-          echo "Downloading pikafish-armv8..."
-          curl -L -f -o app/src/main/assets/pikafish-armv8 \
-            "${BASE_URL}/pikafish-android-armv8" || \
-          curl -L -f -o app/src/main/assets/pikafish-armv8 \
-            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish-android-armv8" || \
-          echo "WARNING: Could not download pikafish-armv8"
+          # Get latest release info
+          echo "Fetching latest Pikafish release..."
+          RELEASE_URL=$(curl -s https://api.github.com/repos/official-pikafish/Pikafish/releases/latest \
+            | grep "browser_download_url.*\.7z" | head -1 | cut -d '"' -f 4)
           
-          # Try downloading armv8-dotprod binary  
-          echo "Downloading pikafish-armv8-dotprod..."
-          curl -L -f -o app/src/main/assets/pikafish-armv8-dotprod \
-            "${BASE_URL}/pikafish-android-armv8-dotprod" || \
-          curl -L -f -o app/src/main/assets/pikafish-armv8-dotprod \
-            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish-android-armv8-dotprod" || \
-          echo "WARNING: Could not download pikafish-armv8-dotprod"
+          if [ -z "$RELEASE_URL" ]; then
+            echo "ERROR: Could not find Pikafish release URL"
+            exit 0
+          fi
           
-          # Download NNUE evaluation file
-          echo "Downloading pikafish.nnue..."
-          curl -L -f -o app/src/main/assets/pikafish.nnue \
-            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish.nnue" || \
-          echo "WARNING: Could not download pikafish.nnue"
+          echo "Downloading: $RELEASE_URL"
+          curl -L -o pikafish-release.7z "$RELEASE_URL"
           
-          # Show downloaded files
-          echo "=== Assets directory ==="
-          ls -la app/src/main/assets/ || echo "No assets"
+          # Extract
+          sudo apt-get install -y p7zip-full
+          mkdir -p pikafish-extract
+          7z x pikafish-release.7z -opikafish-extract -y
+          
+          echo "=== Extracted files ==="
+          find pikafish-extract -type f | head -50
+          
+          # Find Android ARM64 binaries (various possible names)
+          echo "=== Looking for Android binaries ==="
+          find pikafish-extract -type f -name "*android*" -o -name "*armv8*" -o -name "*aarch64*" | head -20
+          
+          # Copy Android ARM64 binaries to assets
+          for f in $(find pikafish-extract -type f -name "*android*armv8*" -o -name "*android*aarch64*"); do
+            basename=$(basename "$f")
+            echo "Found: $f -> copying as assets"
+            if echo "$basename" | grep -qi "dotprod"; then
+              cp "$f" app/src/main/assets/pikafish-armv8-dotprod
+              chmod +x app/src/main/assets/pikafish-armv8-dotprod
+            else
+              cp "$f" app/src/main/assets/pikafish-armv8
+              chmod +x app/src/main/assets/pikafish-armv8
+            fi
+          done
+          
+          # If no specific Android binary found, try to find any armv8/aarch64 binary
+          if [ ! -f app/src/main/assets/pikafish-armv8 ]; then
+            echo "No android-specific binary found, looking for armv8..."
+            for f in $(find pikafish-extract -type f -name "*armv8*" | head -5); do
+              if file "$f" | grep -qi "elf\|executable"; then
+                echo "Using $f as pikafish-armv8"
+                cp "$f" app/src/main/assets/pikafish-armv8
+                chmod +x app/src/main/assets/pikafish-armv8
+                break
+              fi
+            done
+          fi
+          
+          # Look for NNUE file
+          for f in $(find pikafish-extract -type f -name "*.nnue"); do
+            echo "Found NNUE: $f"
+            cp "$f" app/src/main/assets/pikafish.nnue
+            break
+          done
+          
+          # Show final assets
+          echo "=== Final assets ==="
+          ls -la app/src/main/assets/ || echo "No assets found"
+          
+          # Cleanup
+          rm -rf pikafish-extract pikafish-release.7z
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
