@@ -18,6 +18,8 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.chesspro.app.MainActivity
 import com.chesspro.app.R
+import com.chesspro.app.core.capture.BoardRecognizer
+import com.chesspro.app.core.capture.ScreenCaptureService
 import com.chesspro.app.core.engine.AnalysisResult
 import com.chesspro.app.core.engine.EngineState
 import com.chesspro.app.core.engine.FenConverter
@@ -45,6 +47,7 @@ class OverlayService : Service() {
         const val ACTION_ANALYZE = "com.chesspro.app.ACTION_ANALYZE"
         const val ACTION_STOP = "com.chesspro.app.ACTION_STOP"
         const val ACTION_UPDATE_FEN = "com.chesspro.app.ACTION_UPDATE_FEN"
+        const val ACTION_CAPTURE = "com.chesspro.app.ACTION_CAPTURE"
 
         const val EXTRA_FEN = "extra_fen"
 
@@ -63,6 +66,8 @@ class OverlayService : Service() {
     private var overlayView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var engine: PikafishEngine? = null
+    private var screenCapture: ScreenCaptureService? = null
+    private val boardRecognizer = BoardRecognizer()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -78,6 +83,7 @@ class OverlayService : Service() {
 
         // 获取引擎实例
         engine = PikafishEngine.getInstance(applicationContext)
+        screenCapture = ScreenCaptureService(applicationContext)
 
         // 监听引擎分析结果
         serviceScope.launch {
@@ -118,6 +124,7 @@ class OverlayService : Service() {
                     _overlayState.value = _overlayState.value.copy(currentFen = fen)
                 }
             }
+            ACTION_CAPTURE -> captureAndAnalyze()
             ACTION_STOP -> {
                 hideOverlay()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -178,10 +185,7 @@ class OverlayService : Service() {
                             stopForeground(STOP_FOREGROUND_REMOVE)
                             stopSelf()
                         },
-                        onAnalyze = {
-                            val fen = state.currentFen
-                            if (fen.isNotEmpty()) analyzePosition(fen)
-                        },
+                        onAnalyze = { captureAndAnalyze() },
                         onMoveClick = { move -> applyMove(move) },
                         onResize = { w, h -> resizeOverlay(w, h) },
                         onDrag = { x, y -> moveOverlay(x, y) }
@@ -213,6 +217,76 @@ class OverlayService : Service() {
             overlayView = null
         }
         _overlayState.value = _overlayState.value.copy(isVisible = false)
+    }
+
+    /**
+     * 截图 -> 识别棋盘 -> 引擎分析 一体化流程
+     */
+    private fun captureAndAnalyze() {
+        if (!ScreenCaptureService.hasPermission()) {
+            _overlayState.value = _overlayState.value.copy(
+                analysisStatus = "需要屏幕录制权限，请返回APP授权"
+            )
+            return
+        }
+
+        serviceScope.launch {
+            _overlayState.value = _overlayState.value.copy(
+                isAnalyzing = true,
+                analysisStatus = "截屏中..."
+            )
+
+            // 先隐藏悬浮窗，避免截到自己
+            val wasVisible = overlayView != null
+            if (wasVisible) {
+                overlayView?.let { it.visibility = View.INVISIBLE }
+                delay(200)
+            }
+
+            try {
+                val bitmap = screenCapture?.captureScreen()
+                if (bitmap == null) {
+                    _overlayState.value = _overlayState.value.copy(
+                        isAnalyzing = false,
+                        analysisStatus = "截屏失败"
+                    )
+                    return@launch
+                }
+
+                _overlayState.value = _overlayState.value.copy(analysisStatus = "识别中...")
+
+                val result = withContext(Dispatchers.Default) {
+                    boardRecognizer.recognize(bitmap)
+                }
+                bitmap.recycle()
+
+                if (result == null || result.pieces.isEmpty()) {
+                    _overlayState.value = _overlayState.value.copy(
+                        isAnalyzing = false,
+                        analysisStatus = "未识别到棋盘，请确保屏幕上有棋盘"
+                    )
+                    return@launch
+                }
+
+                _overlayState.value = _overlayState.value.copy(
+                    analysisStatus = "识别到${result.pieces.size}个棋子，分析中...",
+                    currentFen = result.fen
+                )
+
+                // 发送给引擎分析
+                analyzePosition(result.fen)
+            } catch (e: Exception) {
+                Log.e(TAG, "截图分析失败", e)
+                _overlayState.value = _overlayState.value.copy(
+                    isAnalyzing = false,
+                    analysisStatus = "识别失败: ${e.message}"
+                )
+            } finally {
+                if (wasVisible) {
+                    overlayView?.let { it.visibility = View.VISIBLE }
+                }
+            }
+        }
     }
 
     /**

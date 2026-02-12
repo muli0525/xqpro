@@ -1,6 +1,9 @@
 package com.chesspro.app
 
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,23 +16,32 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.chesspro.app.core.capture.ScreenCaptureService
 import com.chesspro.app.core.overlay.OverlayService
 import com.chesspro.app.ui.screens.ChessMainScreen
 import com.chesspro.app.ui.theme.ChineseChessProTheme
 
-/**
- * 象棋Pro 主Activity
- */
 class MainActivity : ComponentActivity() {
 
-    // 悬浮窗权限
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (Settings.canDrawOverlays(this)) {
-            startOverlayService()
+            requestScreenCapture()
         } else {
-            Toast.makeText(this, "需要悬浮窗权限才能使用此功能", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "需要悬浮窗权限", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            ScreenCaptureService.savePermission(result.resultCode, result.data)
+            startOverlayService()
+            Toast.makeText(this, "悬浮窗已启动，点击\"识别\"按钮开始分析", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this, "需要屏幕录制权限才能识别棋盘", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -50,51 +62,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * 请求悬浮窗权限并启动
-     */
     private fun requestOverlayAndStart() {
-        if (checkOverlayPermission()) {
-            if (OverlayService.isRunning()) {
-                // 已运行则停止
-                stopOverlayService()
-                Toast.makeText(this, "悬浮窗已关闭", Toast.LENGTH_SHORT).show()
-            } else {
-                startOverlayService()
-                Toast.makeText(this, "悬浮窗已启动", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            requestOverlayPermission()
+        if (OverlayService.isRunning()) {
+            stopOverlayService()
+            Toast.makeText(this, "悬浮窗已关闭", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        if (!checkOverlayPermission()) {
+            requestOverlayPermission()
+            return
+        }
+
+        requestScreenCapture()
     }
 
-    /**
-     * 检查悬浮窗权限
-     */
+    private fun requestScreenCapture() {
+        if (ScreenCaptureService.hasPermission()) {
+            startOverlayService()
+            Toast.makeText(this, "悬浮窗已启动", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mgr.createScreenCaptureIntent())
+    }
+
     private fun checkOverlayPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(this)
-        } else {
-            true
-        }
+        } else true
     }
 
-    /**
-     * 请求悬浮窗权限
-     */
     private fun requestOverlayPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
+            overlayPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             )
-            overlayPermissionLauncher.launch(intent)
         }
     }
 
-    /**
-     * 启动悬浮窗服务
-     */
     private fun startOverlayService() {
         val intent = Intent(this, OverlayService::class.java).apply {
             action = OverlayService.ACTION_SHOW
@@ -102,9 +108,6 @@ class MainActivity : ComponentActivity() {
         startForegroundService(intent)
     }
 
-    /**
-     * 停止悬浮窗服务
-     */
     private fun stopOverlayService() {
         val intent = Intent(this, OverlayService::class.java).apply {
             action = OverlayService.ACTION_STOP

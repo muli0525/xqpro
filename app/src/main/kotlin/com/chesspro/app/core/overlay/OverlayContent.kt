@@ -104,7 +104,8 @@ fun OverlayContent(
                     state.bestMoves.isNotEmpty() -> {
                         AnalysisResultView(
                             state = state,
-                            onMoveClick = onMoveClick
+                            onMoveClick = onMoveClick,
+                            onReAnalyze = onAnalyze
                         )
                     }
                     else -> {
@@ -235,7 +236,8 @@ private fun AnalyzingView() {
 @Composable
 private fun AnalysisResultView(
     state: OverlayState,
-    onMoveClick: (SuggestedMove) -> Unit
+    onMoveClick: (SuggestedMove) -> Unit,
+    onReAnalyze: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -292,13 +294,21 @@ private fun AnalysisResultView(
             }
         }
 
-        // 最佳走法列表
-        Text(
-            text = "推荐走法",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(bottom = 6.dp)
-        )
+        // 重新识别按钮 + 最佳走法列表
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "推荐走法",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            TextButton(onClick = onReAnalyze) {
+                Text("重新识别", fontSize = 11.sp)
+            }
+        }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -397,7 +407,7 @@ private fun ReadyView(onAnalyze: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "点击下方按钮开始分析",
+            text = "截取当前屏幕并识别棋盘",
             fontSize = 14.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center
@@ -409,9 +419,9 @@ private fun ReadyView(onAnalyze: () -> Unit) {
                 containerColor = ChessGold
             )
         ) {
-            Icon(Icons.Default.Psychology, contentDescription = null)
+            Icon(Icons.Default.CameraAlt, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("开始分析")
+            Text("识别棋盘")
         }
     }
 }
