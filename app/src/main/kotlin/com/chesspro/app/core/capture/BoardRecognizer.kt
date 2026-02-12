@@ -74,15 +74,105 @@ class BoardRecognizer {
                 }
             }
 
-            // Step 4: 转FEN
-            val fen = toFen(pieces)
-            Log.d(TAG, "Recognized ${pieces.size} pieces, FEN: $fen")
+            // Step 4: 位置约束校正
+            val corrected = applyPositionConstraints(pieces)
 
-            return RecognitionResult(pieces, fen, boardRect)
+            // Step 5: 转FEN
+            val fen = toFen(corrected)
+            Log.d(TAG, "Recognized ${corrected.size} pieces, FEN: $fen")
+
+            return RecognitionResult(corrected, fen, boardRect)
         } catch (e: Exception) {
             Log.e(TAG, "Recognition failed", e)
             return null
         }
+    }
+
+    /**
+     * 位置约束校正 - 利用象棋规则修正棋子类型
+     * 规则：
+     * - 将/帅只能在九宫格(col 3-5)
+     * - 士/仕只能在九宫格(col 3-5)
+     * - 象/相不能过河(红方row 5-9, 黑方row 0-4)
+     * - 每方最多: 1将, 2士, 2象, 2马, 2车, 2炮, 5兵
+     */
+    private fun applyPositionConstraints(pieces: List<RecognizedPiece>): List<RecognizedPiece> {
+        val result = mutableListOf<RecognizedPiece>()
+
+        // 按颜色分组
+        val redPieces = pieces.filter { it.color == PieceColor.RED }.toMutableList()
+        val blackPieces = pieces.filter { it.color == PieceColor.BLACK }.toMutableList()
+
+        result.addAll(correctSide(redPieces, PieceColor.RED, 5..9))
+        result.addAll(correctSide(blackPieces, PieceColor.BLACK, 0..4))
+
+        return result
+    }
+
+    private fun correctSide(
+        pieces: MutableList<RecognizedPiece>,
+        color: PieceColor,
+        homeSide: IntRange
+    ): List<RecognizedPiece> {
+        val result = mutableListOf<RecognizedPiece>()
+        val counts = mutableMapOf<PieceType, Int>()
+        val maxCounts = mapOf(
+            PieceType.JIANG to 1,
+            PieceType.SHI to 2,
+            PieceType.XIANG to 2,
+            PieceType.MA to 2,
+            PieceType.JU to 2,
+            PieceType.PAO to 2,
+            PieceType.BING to 5
+        )
+
+        for (piece in pieces) {
+            var type = piece.type
+            val pos = piece.position
+
+            // 九宫格约束 (col 3-5, 帅row 7-9/将row 0-2)
+            val inPalace = pos.x in 3..5 &&
+                    (if (color == PieceColor.RED) pos.y in 7..9 else pos.y in 0..2)
+
+            // 如果在九宫格中心且被识别为将/帅，保持
+            if (type == PieceType.JIANG && !inPalace) {
+                type = PieceType.BING // 降级
+            }
+            if (type == PieceType.SHI && !inPalace) {
+                type = PieceType.BING
+            }
+
+            // 象不能过河
+            if (type == PieceType.XIANG && pos.y !in homeSide) {
+                type = PieceType.MA // 过河的象可能是马
+            }
+
+            // 数量限制
+            val current = counts.getOrDefault(type, 0)
+            val max = maxCounts.getOrDefault(type, 5)
+            if (current >= max) {
+                type = PieceType.BING // 超出限制降级为兵
+            }
+
+            counts[type] = (counts.getOrDefault(type, 0)) + 1
+            result.add(RecognizedPiece(type, color, pos))
+        }
+
+        // 确保有且仅有1个将/帅
+        val generals = result.filter { it.type == PieceType.JIANG }
+        if (generals.isEmpty() && result.isNotEmpty()) {
+            // 找九宫格中的棋子，升级为将
+            val candidate = result.find {
+                it.position.x in 3..5 &&
+                        (if (color == PieceColor.RED) it.position.y in 7..9 else it.position.y in 0..2)
+            }
+            if (candidate != null) {
+                val idx = result.indexOf(candidate)
+                result[idx] = RecognizedPiece(PieceType.JIANG, color, candidate.position)
+            }
+        }
+
+        return result
     }
 
     /**
