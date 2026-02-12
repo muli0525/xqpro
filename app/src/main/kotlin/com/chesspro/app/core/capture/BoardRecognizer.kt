@@ -59,8 +59,12 @@ class BoardRecognizer {
             val cellW = boardWidth.toFloat() / (COLS - 1)
             val cellH = boardHeight.toFloat() / (ROWS - 1)
 
-            // Step 3: 在每个交叉点检测棋子
-            val pieces = mutableListOf<RecognizedPiece>()
+            // Step 3: 在每个交叉点检测棋子（带置信度）
+            data class PieceCandidate(
+                val type: PieceType, val color: PieceColor,
+                val position: Position, val confidence: Float
+            )
+            val candidates = mutableListOf<PieceCandidate>()
             for (row in 0 until ROWS) {
                 for (col in 0 until COLS) {
                     val cx = (boardRect.left + col * cellW).toInt()
@@ -69,9 +73,24 @@ class BoardRecognizer {
 
                     val pieceInfo = detectPieceAt(bitmap, cx, cy, radius)
                     if (pieceInfo != null) {
-                        pieces.add(RecognizedPiece(pieceInfo.first, pieceInfo.second, Position(col, row)))
+                        candidates.add(PieceCandidate(
+                            pieceInfo.first, pieceInfo.second,
+                            Position(col, row), pieceInfo.third
+                        ))
                     }
                 }
+            }
+
+            // 中国象棋最多32子，如果检测超过32就按置信度排序取前32
+            val pieces = if (candidates.size > 32) {
+                Log.w(TAG, "检测到${candidates.size}个候选，裁剪到32")
+                candidates.sortedByDescending { it.confidence }
+                    .take(32)
+                    .map { RecognizedPiece(it.type, it.color, it.position) }
+                    .toMutableList()
+            } else {
+                candidates.map { RecognizedPiece(it.type, it.color, it.position) }
+                    .toMutableList()
             }
 
             // Step 4: 位置约束校正
@@ -295,7 +314,7 @@ class BoardRecognizer {
      * 检测指定位置是否有棋子
      * 核心改进：使用亮度对比检测棋子体 + 宽松的颜色墨水检测
      */
-    private fun detectPieceAt(bitmap: Bitmap, cx: Int, cy: Int, radius: Int): Pair<PieceType, PieceColor>? {
+    private fun detectPieceAt(bitmap: Bitmap, cx: Int, cy: Int, radius: Int): Triple<PieceType, PieceColor, Float>? {
         val w = bitmap.width
         val h = bitmap.height
 
@@ -360,16 +379,16 @@ class BoardRecognizer {
         val inkRatio = totalInk.toFloat() / totalCount
         val boardRatio = boardCount.toFloat() / totalCount
 
-        // 检测逻辑：
-        // 棋子 = 有大量棋子体颜色(>20%) + 少量墨水(>1.5%) + 棋盘色不多(<50%)
-        // 或者 = 大量墨水(>5%) + 棋盘色不多
-        val hasPieceBody = pieceBodyRatio > 0.15f
-        val hasSignificantInk = totalInk >= 3
-        val notMostlyBoard = boardRatio < 0.55f
+        // 收紧检测条件 - 必须同时满足：
+        // 1. 棋盘色占比 < 40%（棋子区域大部分不是棋盘色）
+        // 2. 棋子体占比 > 25%（必须有明显的亮色棋子体）
+        // 3. 墨水像素 >= 8（至少有一定量的文字笔画）
+        // 4. 墨水占比 > 2%
 
-        if (!notMostlyBoard) return null
-        if (!hasPieceBody && !hasSignificantInk) return null
-        if (totalInk < 3) return null  // 至少要有一点墨水才能判断颜色
+        if (boardRatio > 0.40f) return null       // 太多棋盘色 → 空位
+        if (pieceBodyRatio < 0.25f) return null    // 不够亮 → 不是棋子
+        if (totalInk < 8) return null              // 墨水太少 → 不是文字
+        if (inkRatio < 0.02f) return null           // 墨水占比太低
 
         val isRed = redInkCount > darkInkCount
         val isBlack = darkInkCount >= redInkCount
@@ -392,7 +411,10 @@ class BoardRecognizer {
 
         val type = classifyPieceType(inkRatio, topInk, midInk, bottomInk, centerDensity, symmetry)
 
-        return Pair(type, color)
+        // 置信度 = 棋子体占比 + 墨水占比（越高越可能是棋子）
+        val confidence = pieceBodyRatio * 2f + inkRatio * 5f
+
+        return Triple(type, color, confidence)
     }
 
     /**

@@ -33,74 +33,88 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Download and extract Pikafish engine
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build Pikafish for Android ARM64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           mkdir -p app/src/main/assets
           
-          # Get latest release info
-          echo "Fetching latest Pikafish release..."
-          RELEASE_URL=$(curl -s https://api.github.com/repos/official-pikafish/Pikafish/releases/latest \
-            | grep "browser_download_url.*\.7z" | head -1 | cut -d '"' -f 4)
+          # Clone Pikafish source
+          echo "=== Cloning Pikafish ==="
+          git clone --depth 1 https://github.com/official-pikafish/Pikafish.git pikafish-src
           
-          if [ -z "$RELEASE_URL" ]; then
-            echo "ERROR: Could not find Pikafish release URL"
-            exit 0
-          fi
+          cd pikafish-src/src
           
-          echo "Downloading: $RELEASE_URL"
-          curl -L -o pikafish-release.7z "$RELEASE_URL"
+          # Show Makefile ARCH options
+          echo "=== Available targets ==="
+          grep -E "^(ifeq|else ifeq).*ARCH" Makefile | head -20 || true
           
-          # Extract
-          sudo apt-get install -y p7zip-full
-          mkdir -p pikafish-extract
-          7z x pikafish-release.7z -opikafish-extract -y
+          # Build for Android ARM64 (armv8) using NDK
+          echo "=== Building pikafish-armv8 ==="
+          export PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           
-          echo "=== Extracted files ==="
-          find pikafish-extract -type f | head -50
-          
-          # Find Android ARM64 binaries (various possible names)
-          echo "=== Looking for Android binaries ==="
-          find pikafish-extract -type f -name "*android*" -o -name "*armv8*" -o -name "*aarch64*" | head -20
-          
-          # Copy Android ARM64 binaries to assets
-          for f in $(find pikafish-extract -type f -name "*android*armv8*" -o -name "*android*aarch64*"); do
-            basename=$(basename "$f")
-            echo "Found: $f -> copying as assets"
-            if echo "$basename" | grep -qi "dotprod"; then
-              cp "$f" app/src/main/assets/pikafish-armv8-dotprod
-              chmod +x app/src/main/assets/pikafish-armv8-dotprod
+          # Try building with COMP=ndk (Stockfish-style Makefile)
+          make clean || true
+          make -j$(nproc) ARCH=armv8 COMP=ndk \
+            CXXFLAGS="-static -O3" \
+            2>&1 | tail -30 || {
+            echo "=== ndk build failed, trying manual cross-compile ==="
+            
+            # Fallback: manual cross-compile with NDK clang++
+            CXX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++"
+            
+            if [ -f "$CXX" ]; then
+              make clean || true
+              make -j$(nproc) ARCH=armv8 \
+                CXX="$CXX" \
+                CXXFLAGS="-static -O3 -DNDEBUG" \
+                LDFLAGS="-static" \
+                2>&1 | tail -30 || echo "Manual build also failed"
             else
-              cp "$f" app/src/main/assets/pikafish-armv8
-              chmod +x app/src/main/assets/pikafish-armv8
+              echo "NDK clang++ not found at expected path"
+              ls "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep aarch64 | head -5
             fi
-          done
+          }
           
-          # If no specific Android binary found, try to find any armv8/aarch64 binary
-          if [ ! -f app/src/main/assets/pikafish-armv8 ]; then
-            echo "No android-specific binary found, looking for armv8..."
-            for f in $(find pikafish-extract -type f -name "*armv8*" | head -5); do
-              if file "$f" | grep -qi "elf\|executable"; then
-                echo "Using $f as pikafish-armv8"
-                cp "$f" app/src/main/assets/pikafish-armv8
-                chmod +x app/src/main/assets/pikafish-armv8
-                break
-              fi
-            done
+          cd ../..
+          
+          # Find and copy the built binary
+          echo "=== Looking for built binaries ==="
+          find pikafish-src -name "pikafish*" -type f ! -name "*.cpp" ! -name "*.h" ! -name "*.o" | head -10
+          
+          BINARY=$(find pikafish-src -name "pikafish" -type f -executable 2>/dev/null | head -1)
+          if [ -z "$BINARY" ]; then
+            BINARY=$(find pikafish-src/src -maxdepth 1 -name "pikafish*" -type f ! -name "*.cpp" ! -name "*.h" ! -name "*.o" | head -1)
           fi
           
-          # Look for NNUE file
-          for f in $(find pikafish-extract -type f -name "*.nnue"); do
-            echo "Found NNUE: $f"
+          if [ -n "$BINARY" ]; then
+            echo "Found binary: $BINARY ($(stat -c%s "$BINARY") bytes)"
+            file "$BINARY" || true
+            cp "$BINARY" app/src/main/assets/pikafish-armv8
+            chmod +x app/src/main/assets/pikafish-armv8
+          else
+            echo "ERROR: No Pikafish binary built!"
+          fi
+          
+          # Look for embedded NNUE or separate .nnue file
+          find pikafish-src -name "*.nnue" -type f | head -5
+          for f in $(find pikafish-src -name "*.nnue" -type f); do
+            echo "Found NNUE: $f ($(stat -c%s "$f") bytes)"
             cp "$f" app/src/main/assets/pikafish.nnue
             break
           done
           
-          # Show final assets
           echo "=== Final assets ==="
-          ls -la app/src/main/assets/ || echo "No assets found"
+          ls -la app/src/main/assets/ || echo "No assets"
           
           # Cleanup
-          rm -rf pikafish-extract pikafish-release.7z
+          rm -rf pikafish-src
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
