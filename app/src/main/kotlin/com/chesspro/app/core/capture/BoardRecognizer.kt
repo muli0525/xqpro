@@ -379,16 +379,21 @@ class BoardRecognizer {
         val inkRatio = totalInk.toFloat() / totalCount
         val boardRatio = boardCount.toFloat() / totalCount
 
-        // 收紧检测条件 - 必须同时满足：
-        // 1. 棋盘色占比 < 40%（棋子区域大部分不是棋盘色）
-        // 2. 棋子体占比 > 25%（必须有明显的亮色棋子体）
-        // 3. 墨水像素 >= 8（至少有一定量的文字笔画）
-        // 4. 墨水占比 > 2%
+        // 检测条件（平衡版: 避免43子误检，也避免漏检）
+        // 棋子特征: 有亮色棋子体 + 有文字墨水 + 棋盘色不太多
+        // 关键: 棋子体+墨水 合计必须显著
 
-        if (boardRatio > 0.40f) return null       // 太多棋盘色 → 空位
-        if (pieceBodyRatio < 0.25f) return null    // 不够亮 → 不是棋子
-        if (totalInk < 8) return null              // 墨水太少 → 不是文字
-        if (inkRatio < 0.02f) return null           // 墨水占比太低
+        if (boardRatio > 0.50f) return null       // 超过一半是棋盘色 → 空位
+        if (totalInk < 5) return null              // 墨水太少 → 没文字
+        
+        // 必须有棋子体或足够多的墨水（两者至少满足一个强条件）
+        val hasPieceBody = pieceBodyRatio > 0.18f
+        val hasStrongInk = inkRatio > 0.05f
+        if (!hasPieceBody && !hasStrongInk) return null
+        
+        // 棋子体+墨水的总非棋盘占比必须显著
+        val pieceSignal = pieceBodyRatio + inkRatio
+        if (pieceSignal < 0.20f) return null       // 总信号太弱
 
         val isRed = redInkCount > darkInkCount
         val isBlack = darkInkCount >= redInkCount

@@ -492,10 +492,9 @@ class OverlayService : Service() {
         statusText?.setBackgroundColor(Color.argb(120, 38, 198, 176))
 
         serviceScope.launch {
-            // 隐藏悬浮窗和箭头，避免截到自己
-            floatingView?.visibility = View.INVISIBLE
+            // 只隐藏箭头overlay，不隐藏悬浮窗（避免闪烁）
             arrowOverlay?.visibility = View.INVISIBLE
-            delay(150)
+            delay(100)
 
             try {
                 val bitmap = screenCapture?.captureScreen()
@@ -565,7 +564,6 @@ class OverlayService : Service() {
                 analysisText?.text = "错误: ${e.message}"
                 isAnalyzing = false
             } finally {
-                floatingView?.visibility = View.VISIBLE
                 arrowOverlay?.visibility = View.VISIBLE
             }
         }

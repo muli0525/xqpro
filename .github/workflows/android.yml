@@ -77,14 +77,14 @@ jobs:
           # Build for Android ARM64 — exactly as Pikafish Makefile expects
           echo "=== Building pikafish ARCH=armv8 COMP=ndk ==="
           make clean || true
-          make -j$(nproc) build ARCH=armv8 COMP=ndk 2>&1 | tail -40
+          make -j$(nproc) build ARCH=armv8 COMP=ndk
           
           echo "=== Build result ==="
-          ls -la pikafish* 2>/dev/null || echo "No pikafish binary in src/"
+          ls -la pikafish* 2>/dev/null || true
           
           cd ../..
           
-          # Copy built binary to assets
+          # Copy built binary to assets — MUST exist or fail
           if [ -f pikafish-src/src/pikafish ]; then
             echo "=== Pikafish binary built successfully ==="
             file pikafish-src/src/pikafish
@@ -92,11 +92,12 @@ jobs:
             cp pikafish-src/src/pikafish app/src/main/assets/pikafish-armv8
             chmod +x app/src/main/assets/pikafish-armv8
           else
-            echo "ERROR: pikafish binary not found after build!"
-            find pikafish-src -name "pikafish" -type f 2>/dev/null | head -5
+            echo "::error::Pikafish binary not found after build!"
+            find pikafish-src -type f -name "pikafish*" 2>/dev/null | head -10
+            exit 1
           fi
           
-          # Copy NNUE file if exists
+          # Copy NNUE file if exists (modern Pikafish embeds NNUE, so it's optional)
           for f in $(find pikafish-src -name "*.nnue" -type f 2>/dev/null); do
             echo "Found NNUE: $f ($(stat -c%s "$f") bytes)"
             cp "$f" app/src/main/assets/pikafish.nnue
