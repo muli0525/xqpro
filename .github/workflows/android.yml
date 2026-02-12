@@ -33,11 +33,11 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Setup Android NDK
+      - name: Setup Android NDK r27c
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26d
+          ndk-version: r27c
 
       - name: Build Pikafish for Android ARM64
         env:
@@ -45,66 +45,59 @@ jobs:
         run: |
           mkdir -p app/src/main/assets
           
-          # Clone Pikafish source
+          # Clone Pikafish source (latest release)
           echo "=== Cloning Pikafish ==="
           git clone --depth 1 https://github.com/official-pikafish/Pikafish.git pikafish-src
           
           cd pikafish-src/src
           
-          # Show Makefile ARCH options
-          echo "=== Available targets ==="
-          grep -E "^(ifeq|else ifeq).*ARCH" Makefile | head -20 || true
-          
-          # Build for Android ARM64 (armv8) using NDK
-          echo "=== Building pikafish-armv8 ==="
+          # Add NDK toolchain to PATH (Pikafish Makefile looks for aarch64-linux-android29-clang++)
           export PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          echo "NDK PATH: ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           
-          # Try building with COMP=ndk (Stockfish-style Makefile)
-          make clean || true
-          make -j$(nproc) ARCH=armv8 COMP=ndk \
-            CXXFLAGS="-static -O3" \
-            2>&1 | tail -30 || {
-            echo "=== ndk build failed, trying manual cross-compile ==="
-            
-            # Fallback: manual cross-compile with NDK clang++
-            CXX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++"
-            
-            if [ -f "$CXX" ]; then
-              make clean || true
-              make -j$(nproc) ARCH=armv8 \
-                CXX="$CXX" \
-                CXXFLAGS="-static -O3 -DNDEBUG" \
-                LDFLAGS="-static" \
-                2>&1 | tail -30 || echo "Manual build also failed"
-            else
-              echo "NDK clang++ not found at expected path"
-              ls "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep aarch64 | head -5
-            fi
+          # Verify compiler exists
+          which aarch64-linux-android29-clang++ || {
+            echo "=== Looking for available aarch64 compilers ==="
+            ls ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64* 2>/dev/null | head -10
+            # Try with API level 21 if 29 not found
+            for api in 29 28 27 26 24 21; do
+              if [ -f "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${api}-clang++" ]; then
+                echo "Found API $api compiler, creating symlink for API 29"
+                ln -sf "aarch64-linux-android${api}-clang++" \
+                  "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+                break
+              fi
+            done
           }
+          
+          # Download NNUE network file first
+          echo "=== Downloading NNUE network ==="
+          make net || echo "net download skipped"
+          
+          # Build for Android ARM64 — exactly as Pikafish Makefile expects
+          echo "=== Building pikafish ARCH=armv8 COMP=ndk ==="
+          make clean || true
+          make -j$(nproc) build ARCH=armv8 COMP=ndk 2>&1 | tail -40
+          
+          echo "=== Build result ==="
+          ls -la pikafish* 2>/dev/null || echo "No pikafish binary in src/"
           
           cd ../..
           
-          # Find and copy the built binary
-          echo "=== Looking for built binaries ==="
-          find pikafish-src -name "pikafish*" -type f ! -name "*.cpp" ! -name "*.h" ! -name "*.o" | head -10
-          
-          BINARY=$(find pikafish-src -name "pikafish" -type f -executable 2>/dev/null | head -1)
-          if [ -z "$BINARY" ]; then
-            BINARY=$(find pikafish-src/src -maxdepth 1 -name "pikafish*" -type f ! -name "*.cpp" ! -name "*.h" ! -name "*.o" | head -1)
-          fi
-          
-          if [ -n "$BINARY" ]; then
-            echo "Found binary: $BINARY ($(stat -c%s "$BINARY") bytes)"
-            file "$BINARY" || true
-            cp "$BINARY" app/src/main/assets/pikafish-armv8
+          # Copy built binary to assets
+          if [ -f pikafish-src/src/pikafish ]; then
+            echo "=== Pikafish binary built successfully ==="
+            file pikafish-src/src/pikafish
+            ls -la pikafish-src/src/pikafish
+            cp pikafish-src/src/pikafish app/src/main/assets/pikafish-armv8
             chmod +x app/src/main/assets/pikafish-armv8
           else
-            echo "ERROR: No Pikafish binary built!"
+            echo "ERROR: pikafish binary not found after build!"
+            find pikafish-src -name "pikafish" -type f 2>/dev/null | head -5
           fi
           
-          # Look for embedded NNUE or separate .nnue file
-          find pikafish-src -name "*.nnue" -type f | head -5
-          for f in $(find pikafish-src -name "*.nnue" -type f); do
+          # Copy NNUE file if exists
+          for f in $(find pikafish-src -name "*.nnue" -type f 2>/dev/null); do
             echo "Found NNUE: $f ($(stat -c%s "$f") bytes)"
             cp "$f" app/src/main/assets/pikafish.nnue
             break
