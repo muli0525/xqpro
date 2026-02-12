@@ -1,6 +1,7 @@
 package com.chesspro.app.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -27,6 +28,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chesspro.app.core.chess.*
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * 高质量象棋棋盘视图
@@ -238,7 +243,7 @@ private fun ChessBoardContent(
         val boardHeight = boardWidth * 1.11f
 
         // 绘制楚河汉界
-        drawRiver(padding, boardHeight, boardWidth)
+        drawRiver(padding, boardHeight, boardWidth, cellSize)
 
         // 绘制网格线
         drawGridLines(padding, boardWidth, boardHeight, cellSize)
@@ -344,7 +349,7 @@ private fun ChessBoardContent(
 /**
  * 绘制楚河汉界
  */
-private fun DrawScope.drawRiver(padding: Float, boardHeight: Float, boardWidth: Float) {
+private fun DrawScope.drawRiver(padding: Float, boardHeight: Float, boardWidth: Float, cellSize: Float) {
     val riverY = boardHeight / 2 + padding - cellSize / 2
 
     // 楚河汉界背景
@@ -551,7 +556,7 @@ private fun SuggestionArrow(
         // 计算箭头方向
         val dx = to.x - from.x
         val dy = to.y - from.y
-        val length = kotlin.math.sqrt(dx * dx + dy * dy)
+        val length = sqrt(dx * dx + dy * dy)
         val normalizedDx = dx / length
         val normalizedDy = dy / length
 
@@ -573,13 +578,14 @@ private fun SuggestionArrow(
         // 绘制箭头头部
         val arrowHeadSize = cellSize * 0.2f
         val arrowHeadAngle = 30f
-        val angle1 = kotlin.math.toRadians(arrowHeadAngle.toDouble())
-        val angle2 = kotlin.math.toRadians((-arrowHeadAngle).toDouble())
+        val angle1 = Math.toRadians(arrowHeadAngle.toDouble())
+        val angle2 = Math.toRadians((-arrowHeadAngle).toDouble())
 
-        val headX1 = endX - arrowHeadSize * kotlin.math.cos(angle1 - kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-        val headY1 = endY - arrowHeadSize * kotlin.math.sin(angle1 - kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-        val headX2 = endX - arrowHeadSize * kotlin.math.cos(angle2 - kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-        val headY2 = endY - arrowHeadSize * kotlin.math.sin(angle2 - kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        val baseAngle = atan2(dy.toDouble(), dx.toDouble())
+        val headX1 = endX - arrowHeadSize * cos(angle1 - baseAngle).toFloat()
+        val headY1 = endY - arrowHeadSize * sin(angle1 - baseAngle).toFloat()
+        val headX2 = endX - arrowHeadSize * cos(angle2 - baseAngle).toFloat()
+        val headY2 = endY - arrowHeadSize * sin(angle2 - baseAngle).toFloat()
 
         drawPath(
             path = Path().apply {

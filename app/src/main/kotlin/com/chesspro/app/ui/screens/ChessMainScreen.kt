@@ -32,7 +32,7 @@ import com.chesspro.app.ui.theme.ChessRed
 /**
  * 象棋APP主屏幕
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ChessMainScreen(
     viewModel: ChessViewModel = viewModel(),
@@ -329,6 +329,7 @@ fun MoveSuggestionCard(
 /**
  * 棋子选择器（摆棋模式）
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PieceSelector(
     selectedType: PieceType?,
@@ -458,6 +459,7 @@ fun ActionBar(
 /**
  * 棋子选择器对话框
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PiecePickerDialog(
     position: Position,
@@ -547,7 +549,7 @@ fun SettingsDialog(
                     color = MaterialTheme.colorScheme.secondary
                 )
 
-                HorizontalDivider()
+                Divider()
 
                 Text(
                     text = "象棋 Pro v1.0.0\nPowered by Pikafish",
