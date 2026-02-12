@@ -100,6 +100,8 @@ class OverlayService : Service() {
         when (intent?.action) {
             ACTION_SHOW -> {
                 startForeground(NOTIFICATION_ID, createNotification())
+                // 在前台服务启动后初始化截屏（Android 14要求）
+                screenCapture?.initialize()
                 showButton()
                 showArrowOverlay()
             }
@@ -118,6 +120,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         stopAutoMode()
         serviceScope.cancel()
+        screenCapture?.release()
         hideAll()
         instance = null
         super.onDestroy()
