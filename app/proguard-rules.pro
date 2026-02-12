@@ -1,10 +1,4 @@
-# 添加项目相关的 ProGuard 规则
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.kts.
-
-# Keep OpenCV classes
--keep class org.opencv.** { *; }
--dontwarn org.opencv.**
+# ProGuard rules for 象棋Pro
 
 # Keep Kotlin Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
@@ -14,19 +8,11 @@
 -keep class androidx.compose.** { *; }
 -dontwarn androidx.compose.**
 
-# Keep CameraX classes
--keep class androidx.camera.** { *; }
--dontwarn androidx.camera.**
-
-# Keep our chess classes
+# Keep our chess and engine classes
 -keep class com.chesspro.app.core.chess.** { *; }
--keep class com.chesspro.app.core.recognition.** { *; }
+-keep class com.chesspro.app.core.engine.** { *; }
+-keep class com.chesspro.app.core.overlay.** { *; }
 -keep class com.chesspro.app.ui.** { *; }
-
-# Keep data classes
--keepclassmembers class * {
-    @com.google.gson.annotations.SerializedName <fields>;
-}
 
 # Keep enums
 -keepclassmembers enum * {

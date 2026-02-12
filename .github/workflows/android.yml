@@ -1,230 +1,91 @@
-# GitHub Actions - Android CI/CD Workflow
-# 用于自动构建和测试Android项目
-
 name: ChineseChessPro CI/CD
 
 on:
-  # 触发条件：推送到main分支或创建Pull Request
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
-  
-  # 支持手动触发
   workflow_dispatch:
 
 env:
-  ANDROID_HOME: ${{ github.workspace }}/android-sdk
   JAVA_VERSION: '17'
 
 jobs:
-  # 1. 代码检查和测试
-  lint:
-    name: Lint and Test
-    runs-on: ubuntu-latest
-    
-    steps:
-      # 检出代码
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      # 设置Java环境
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: 'gradle'
-      
-      # 设置Android SDK
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      
-      # 安装所需的SDK组件
-      - name: Install Android SDK components
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
-      
-      # 设置gradlew执行权限
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-      
-      # 运行Gradle检查
-      - name: Run lint
-        run: ./gradlew lint --no-daemon || true
-        
-      # 运行单元测试
-      - name: Run unit tests
-        run: ./gradlew test --no-daemon || true
-      
-      # 上传Lint报告（如果存在）
-      - name: Upload lint report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lint-report
-          path: app/build/reports/
-
-  # 2. 构建Debug版本
-  build-debug:
+  build:
     name: Build Debug APK
     runs-on: ubuntu-latest
-    needs: lint
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
           cache: 'gradle'
-      
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-      
-      - name: Install Android SDK components
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
-      
-      # 设置gradlew执行权限
+
       - name: Make gradlew executable
         run: chmod +x gradlew
-      
-      # 构建Debug APK
+
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
-      
-      # 重命名APK（添加版本信息）
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
       - name: Rename APK
         run: |
           APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
           if [ -f "$APK_PATH" ]; then
-            VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "1.0")
             DATE=$(date +%Y%m%d)
-            cp "$APK_PATH" "ChineseChessPro-v${VERSION_NAME}-${DATE}-debug.apk"
-            echo "APK_NAME=ChineseChessPro-v${VERSION_NAME}-${DATE}-debug.apk" >> $GITHUB_ENV
+            cp "$APK_PATH" "ChineseChessPro-${DATE}-debug.apk"
           fi
-      
-      # 上传APK
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
           path: ChineseChessPro*.apk
-          retention-days: 7
-
-  # 3. 构建Release版本
-  build-release:
-    name: Build Release APK
-    runs-on: ubuntu-latest
-    needs: lint
-    
-    # 仅在主分支且有tag时运行
-    if: github.ref == 'refs/heads/main' && startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: 'gradle'
-      
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      
-      - name: Install Android SDK components
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
-      
-      # 设置gradlew执行权限
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-      
-      # 解密签名文件（需要配置）
-      - name: Decrypt signing key
-        uses: dawidd6/action-android-apk-sign@v3
-        with:
-          keystore-url: ${{ secrets.KEYSTORE_URL }}
-          keystore-alias: ${{ secrets.KEYSTORE_ALIAS }}
-          keystore-password: ${{ secrets.KEYSTORE_PASSWORD }}
-          key-store-password: ${{ secrets.KEY_PASSWORD }}
-          key-alias: ${{ secrets.KEY_ALIAS }}
-          key-password: ${{ secrets.KEY_PASSWORD }}
-      
-      # 构建Release APK
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon
-      
-      # 上传Release APK
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: app/build/outputs/apk/release/app-release-*.apk
           retention-days: 30
 
-  # 4. 创建Release（仅在打tag时）
-  create-release:
-    name: Create GitHub Release
+  release:
+    name: Create Release
     runs-on: ubuntu-latest
-    needs: [build-debug, build-release]
-    if: startsWith(github.ref, 'refs/tags/')
-    
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Get version info
-        run: |
-          VERSION_TAG=${GITHUB_REF#refs/tags/}
-          echo "VERSION=${VERSION_TAG}" >> $GITHUB_ENV
-      
-      - name: Download Debug APK
+      - name: Download APK
         uses: actions/download-artifact@v4
         with:
           name: debug-apk
           path: releases/
-      
-      - name: Download Release APK
-        uses: actions/download-artifact@v4
-        with:
-          name: release-apk
-          path: releases/
-      
-      - name: Create Release
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: releases/*
           tag_name: ${{ github.ref_name }}
-          name: ChineseChessPro ${{ github.ref_name }}
+          name: 象棋Pro ${{ github.ref_name }}
           body: |
-            ## ChineseChessPro Android App
-            
-            ### 新功能
-            - 中国象棋AI对战
-            - 棋盘相机识别
-            - 摆棋练习模式
-            - 多种难度选择
-            
-            ### 下载
-            - **Debug版本**：适用于测试
-            - **Release版本**：正式发布版本
+            ## 象棋Pro - Pikafish引擎驱动的象棋辅助APP
+
+            ### 功能
+            - Pikafish引擎实时分析
+            - 可自由移动/缩放的悬浮窗
+            - 手动摆棋和走棋
+            - FEN格式导入/导出
+
+            ### 安装
+            下载APK文件直接安装（需要ARM64设备）
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-# 并发控制：同一分支只运行一个工作流
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

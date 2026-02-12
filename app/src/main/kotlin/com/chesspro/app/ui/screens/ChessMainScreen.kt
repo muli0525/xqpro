@@ -1,20 +1,33 @@
 package com.chesspro.app.ui.screens
 
-import android.Manifest
-import android.graphics.Bitmap
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chesspro.app.core.chess.*
 import com.chesspro.app.ui.ChessViewModel
 import com.chesspro.app.ui.GameMode
 import com.chesspro.app.ui.components.*
+import com.chesspro.app.ui.theme.ChessGold
+import com.chesspro.app.ui.theme.ChessRed
 
 /**
  * 象棋APP主屏幕
@@ -22,157 +35,178 @@ import com.chesspro.app.ui.components.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChessMainScreen(
-    viewModel: ChessViewModel = viewModel()
+    viewModel: ChessViewModel = viewModel(),
+    onStartOverlay: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val selectedPosition by viewModel.selectedPosition.collectAsState()
     val suggestedMove by viewModel.suggestedMove.collectAsState()
     val currentMode by viewModel.currentMode.collectAsState()
-    
+    val editPieceType by viewModel.editPieceType.collectAsState()
+    val editPieceColor by viewModel.editPieceColor.collectAsState()
+    val engineResult by viewModel.engineResult.collectAsState()
+
     var showSettings by remember { mutableStateOf(false) }
-    var currentTab by remember { mutableIntStateOf(0) }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("中国象棋 Pro") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("象棋 Pro", fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = if (currentMode == GameMode.BOARD_EDIT)
+                                MaterialTheme.colorScheme.tertiaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = if (currentMode == GameMode.BOARD_EDIT) "摆棋" else "走棋",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        // 引擎状态
+                        Surface(
+                            color = if (uiState.engineReady)
+                                Color(0xFF4CAF50).copy(alpha = 0.2f)
+                            else Color.Gray.copy(alpha = 0.2f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = uiState.engineStatus,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                },
                 actions = {
+                    IconButton(onClick = onStartOverlay) {
+                        Icon(Icons.Default.Layers, contentDescription = "悬浮窗",
+                            tint = ChessGold)
+                    }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
-                }
-            )
-        },
-        bottomBar = {
-            BottomNavigationBar(
-                currentTab = currentTab,
-                onTabSelected = { tab ->
-                    currentTab = tab
-                    when (tab) {
-                        0 -> viewModel.setMode(GameMode.AI_VS_PLAYER)
-                        1 -> viewModel.setMode(GameMode.PLAYER_VS_PLAYER)
-                        2 -> viewModel.setMode(GameMode.BOARD_EDIT)
-                        3 -> viewModel.setMode(GameMode.CAMERA_RECOGNITION)
-                    }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
             )
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(paddingValues),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            when (currentTab) {
-                0, 1, 2 -> {
-                    // 棋盘对战/摆棋模式
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // 状态栏
-                        GameStatusBar(
-                            currentPlayer = uiState.currentPlayer,
-                            moveCount = uiState.moveCount,
-                            gameState = uiState.gameState
-                        )
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        // 棋盘
-                        ChessBoardView(
-                            board = viewModel.chessBoard,
-                            selectedPosition = selectedPosition,
-                            suggestedMove = suggestedMove,
-                            onPositionClick = { viewModel.onPositionClick(it) },
-                            onPieceDrag = { from, to -> viewModel.onPieceDrag(from, to) },
-                            boardSize = 350.dp,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.weight(1f))
-                        
-                        // 建议走法提示
-                        suggestedMove?.let { move ->
-                            MoveSuggestionView(
-                                move = move,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
-                        
-                        // 操作按钮
-                        ActionButtons(
-                            onUndo = { viewModel.undoMove() },
-                            onRestart = { viewModel.restart() },
-                            isThinking = uiState.isThinking
-                        )
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
-                
-                3 -> {
-                    // 相机识别模式
-                    CameraRecognitionScreen(
-                        onImageCaptured = { bitmap ->
-                            viewModel.recognizeImage(bitmap)
-                        },
-                        suggestedMove = suggestedMove,
-                        isRecognizing = uiState.isRecognizing,
-                        recognitionConfidence = uiState.recognitionConfidence,
-                        onCalculateMove = { viewModel.calculateSuggestedMove() }
+            // 状态栏
+            GameStatusBar(
+                currentPlayer = uiState.currentPlayer,
+                moveCount = uiState.moveCount,
+                evaluation = uiState.evaluation,
+                depth = uiState.analysisDepth,
+                isThinking = uiState.isThinking
+            )
+
+            // 棋盘
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                ChessBoardView(
+                    board = viewModel.chessBoard,
+                    selectedPosition = selectedPosition,
+                    suggestedMove = suggestedMove,
+                    onPositionClick = { viewModel.onPositionClick(it) },
+                    onPieceDrag = { from, to -> viewModel.onPieceDrag(from, to) },
+                    boardSize = 380.dp
+                )
+            }
+
+            // 分析提示
+            AnimatedVisibility(
+                visible = suggestedMove != null,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
+                suggestedMove?.let { move ->
+                    MoveSuggestionCard(
+                        move = move,
+                        evaluation = uiState.evaluation,
+                        depth = uiState.analysisDepth,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
                 }
             }
-            
-            // 游戏结束对话框
-            if (uiState.gameState != GameState.PLAYING) {
-                GameOverDialog(
-                    gameState = uiState.gameState,
-                    onRestart = { viewModel.restart() }
+
+            // AI思考指示
+            AnimatedVisibility(
+                visible = uiState.isThinking && suggestedMove == null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                AIThinkingView(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+
+            // 摆棋模式 - 棋子选择器
+            if (currentMode == GameMode.BOARD_EDIT) {
+                PieceSelector(
+                    selectedType = editPieceType,
+                    selectedColor = editPieceColor,
+                    onTypeSelect = { viewModel.setEditPieceType(it) },
+                    onColorToggle = {
+                        viewModel.setEditPieceColor(
+                            if (editPieceColor == PieceColor.RED) PieceColor.BLACK else PieceColor.RED
+                        )
+                    }
                 )
             }
+
+            // 操作按钮区
+            ActionBar(
+                currentMode = currentMode,
+                isThinking = uiState.isThinking,
+                hasMoves = viewModel.chessBoard.getMoveCount() > 0,
+                onModeToggle = {
+                    viewModel.setMode(
+                        if (currentMode == GameMode.BOARD_EDIT) GameMode.PLAY else GameMode.BOARD_EDIT
+                    )
+                },
+                onAnalyze = { viewModel.analyzeCurrentPosition() },
+                onUndo = { viewModel.undoMove() },
+                onRestart = { viewModel.restart() },
+                onClear = { viewModel.clearBoard() },
+                onTogglePlayer = { viewModel.toggleCurrentPlayer() }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
-    
+
     // 设置对话框
     if (showSettings) {
-        SettingsDialog(onDismiss = { showSettings = false })
+        SettingsDialog(
+            onDismiss = { showSettings = false },
+            onDepthChange = { viewModel.setEngineDepth(it) }
+        )
     }
-}
 
-/**
- * 底部导航栏
- */
-@Composable
-fun BottomNavigationBar(
-    currentTab: Int,
-    onTabSelected: (Int) -> Unit
-) {
-    NavigationBar {
-        NavigationBarItem(
-            selected = currentTab == 0,
-            onClick = { onTabSelected(0) },
-            icon = { Icon(Icons.Default.Computer, contentDescription = "人机对战") },
-            label = { Text("人机") }
-        )
-        NavigationBarItem(
-            selected = currentTab == 1,
-            onClick = { onTabSelected(1) },
-            icon = { Icon(Icons.Default.People, contentDescription = "双人对战") },
-            label = { Text("对战") }
-        )
-        NavigationBarItem(
-            selected = currentTab == 2,
-            onClick = { onTabSelected(2) },
-            icon = { Icon(Icons.Default.Edit, contentDescription = "摆棋模式") },
-            label = { Text("摆棋") }
-        )
-        NavigationBarItem(
-            selected = currentTab == 3,
-            onClick = { onTabSelected(3) },
-            icon = { Icon(Icons.Default.CameraAlt, contentDescription = "相机识别") },
-            label = { Text("相机") }
+    // 棋子选择器对话框
+    if (uiState.showPiecePicker && uiState.pickedPosition != null) {
+        PiecePickerDialog(
+            position = uiState.pickedPosition!!,
+            onPieceSelected = { type, color ->
+                viewModel.addPiece(type, color, uiState.pickedPosition!!)
+            },
+            onDismiss = { }
         )
     }
 }
@@ -184,161 +218,289 @@ fun BottomNavigationBar(
 fun GameStatusBar(
     currentPlayer: PieceColor,
     moveCount: Int,
-    gameState: GameState
+    evaluation: String,
+    depth: Int,
+    isThinking: Boolean
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 当前执子方
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (currentPlayer == PieceColor.RED) Icons.Default.Flag else Icons.Default.Flag,
-                contentDescription = null,
-                tint = if (currentPlayer == PieceColor.RED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (currentPlayer == PieceColor.RED) ChessRed else Color.Black
+                    )
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (currentPlayer == PieceColor.RED) "红方走棋" else "黑方走棋",
+                text = if (currentPlayer == PieceColor.RED) "红方" else "黑方",
                 style = MaterialTheme.typography.titleMedium
             )
         }
-        
-        // 步数
+
+        if (depth > 0) {
+            Text(
+                text = "评估: $evaluation (d$depth)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         Text(
-            text = "第 ${moveCount / 2 + 1} 步",
+            text = "第${moveCount / 2 + 1}手",
             style = MaterialTheme.typography.bodyMedium
         )
     }
 }
 
 /**
- * 操作按钮
+ * 走法建议卡片
  */
 @Composable
-fun ActionButtons(
-    onUndo: () -> Unit,
-    onRestart: () -> Unit,
-    isThinking: Boolean
+fun MoveSuggestionCard(
+    move: Move,
+    evaluation: String,
+    depth: Int,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier.padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = RoundedCornerShape(12.dp)
     ) {
-        OutlinedButton(
-            onClick = onUndo,
-            enabled = !isThinking
-        ) {
-            Icon(Icons.Default.Undo, contentDescription = null)
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("撤销")
-        }
-        
-        Button(onClick = onRestart) {
-            Icon(Icons.Default.Refresh, contentDescription = null)
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("重新开始")
-        }
-    }
-}
-
-/**
- * 相机识别屏幕
- */
-@Composable
-fun CameraRecognitionScreen(
-    onImageCaptured: (Bitmap) -> Unit,
-    suggestedMove: Move?,
-    isRecognizing: Boolean,
-    recognitionConfidence: Float,
-    onCalculateMove: () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // 相机预览
-        Card(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(400.dp)
-                .padding(16.dp)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            CameraPreview(
-                onImageCaptured = onImageCaptured,
-                isEnabled = !isRecognizing
-            )
-        }
-        
-        // 识别状态
-        if (isRecognizing) {
-            CircularProgressIndicator()
-            Text(
-                text = "正在识别棋盘...",
-                modifier = Modifier.padding(16.dp)
-            )
-        } else if (recognitionConfidence > 0) {
-            Text(
-                text = "识别置信度: ${(recognitionConfidence * 100).toInt()}%",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (recognitionConfidence > 0.7) 
-                    MaterialTheme.colorScheme.primary 
-                else 
-                    MaterialTheme.colorScheme.error
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // 建议走法
-        suggestedMove?.let { move ->
-            MoveSuggestionView(
-                move = move,
-                modifier = Modifier.padding(16.dp)
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Button(onClick = onCalculateMove) {
-                Text("重新计算走法")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Lightbulb,
+                    contentDescription = null,
+                    tint = ChessGold,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "最佳走法",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = move.moveNotation.ifEmpty { "${move.from} → ${move.to}" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
-        } ?: run {
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = evaluation,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (evaluation.startsWith("+")) Color(0xFF4CAF50)
+                    else if (evaluation.startsWith("-")) ChessRed
+                    else Color.Gray
+                )
+                if (depth > 0) {
+                    Text(
+                        text = "深度 $depth",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 棋子选择器（摆棋模式）
+ */
+@Composable
+fun PieceSelector(
+    selectedType: PieceType?,
+    selectedColor: PieceColor,
+    onTypeSelect: (PieceType?) -> Unit,
+    onColorToggle: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("选择棋子:", style = MaterialTheme.typography.labelMedium)
+            TextButton(onClick = onColorToggle) {
+                Text(
+                    text = if (selectedColor == PieceColor.RED) "红方" else "黑方",
+                    color = if (selectedColor == PieceColor.RED) ChessRed else Color.Black
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val pieces = PieceType.entries.toTypedArray()
+            // 取消选择按钮
+            FilterChip(
+                selected = selectedType == null,
+                onClick = { onTypeSelect(null) },
+                label = { Text("清除", fontSize = 12.sp) },
+                leadingIcon = {
+                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+            )
+            pieces.forEach { type ->
+                val name = ChessPiece(type, selectedColor, Position(0, 0)).getSymbol()
+                FilterChip(
+                    selected = selectedType == type,
+                    onClick = { onTypeSelect(type) },
+                    label = { Text(name, fontSize = 14.sp) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 操作按钮栏
+ */
+@Composable
+fun ActionBar(
+    currentMode: GameMode,
+    isThinking: Boolean,
+    hasMoves: Boolean,
+    onModeToggle: () -> Unit,
+    onAnalyze: () -> Unit,
+    onUndo: () -> Unit,
+    onRestart: () -> Unit,
+    onClear: () -> Unit,
+    onTogglePlayer: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // 模式切换
+        FilledTonalButton(onClick = onModeToggle) {
+            Icon(
+                if (currentMode == GameMode.BOARD_EDIT) Icons.Default.PlayArrow else Icons.Default.Edit,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(if (currentMode == GameMode.BOARD_EDIT) "走棋" else "摆棋", fontSize = 13.sp)
+        }
+
+        // 分析
+        Button(
+            onClick = onAnalyze,
+            enabled = !isThinking,
+            colors = ButtonDefaults.buttonColors(containerColor = ChessGold)
+        ) {
+            Icon(Icons.Default.Psychology, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("分析", fontSize = 13.sp)
+        }
+
+        // 切换执子方
+        OutlinedButton(onClick = onTogglePlayer) {
+            Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("换手", fontSize = 13.sp)
+        }
+
+        if (currentMode == GameMode.PLAY && hasMoves) {
+            OutlinedButton(onClick = onUndo, enabled = !isThinking) {
+                Icon(Icons.Default.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("撤销", fontSize = 13.sp)
+            }
+        }
+
+        // 重置/清空
+        OutlinedButton(
+            onClick = if (currentMode == GameMode.BOARD_EDIT) onClear else onRestart
+        ) {
+            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = "拍摄棋盘照片以获取走法建议",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(16.dp)
+                if (currentMode == GameMode.BOARD_EDIT) "清空" else "重置",
+                fontSize = 13.sp
             )
         }
     }
 }
 
 /**
- * 游戏结束对话框
+ * 棋子选择器对话框
  */
 @Composable
-fun GameOverDialog(
-    gameState: GameState,
-    onRestart: () -> Unit
+fun PiecePickerDialog(
+    position: Position,
+    onPieceSelected: (PieceType, PieceColor) -> Unit,
+    onDismiss: () -> Unit
 ) {
+    var selectedColor by remember { mutableStateOf(PieceColor.RED) }
+
     AlertDialog(
-        onDismissRequest = { },
-        title = {
-            Text(
-                text = when (gameState) {
-                    GameState.RED_WINS -> "红方胜！"
-                    GameState.BLACK_WINS -> "黑方胜！"
-                    GameState.DRAW -> "和棋"
-                    else -> ""
+        onDismissRequest = onDismiss,
+        title = { Text("选择棋子") },
+        text = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    FilterChip(
+                        selected = selectedColor == PieceColor.RED,
+                        onClick = { selectedColor = PieceColor.RED },
+                        label = { Text("红方") }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = selectedColor == PieceColor.BLACK,
+                        onClick = { selectedColor = PieceColor.BLACK },
+                        label = { Text("黑方") }
+                    )
                 }
-            )
+                Spacer(modifier = Modifier.height(16.dp))
+                PieceType.entries.forEach { type ->
+                    val name = ChessPiece(type, selectedColor, Position(0, 0)).getSymbol()
+                    TextButton(
+                        onClick = { onPieceSelected(type, selectedColor) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(name, fontSize = 20.sp)
+                    }
+                }
+            }
         },
         confirmButton = {
-            Button(onClick = onRestart) {
-                Text("再来一局")
-            }
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }
@@ -347,54 +509,55 @@ fun GameOverDialog(
  * 设置对话框
  */
 @Composable
-fun SettingsDialog(onDismiss: () -> Unit) {
-    var aiDifficulty by remember { mutableIntStateOf(3) }
-    var showCoordinates by remember { mutableStateOf(true) }
-    
+fun SettingsDialog(
+    onDismiss: () -> Unit,
+    onDepthChange: (Int) -> Unit = {}
+) {
+    var searchDepth by remember { mutableIntStateOf(18) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("设置") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Settings, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("设置")
+            }
+        },
         text = {
-            Column {
-                // AI难度
-                Text("AI难度", style = MaterialTheme.typography.titleSmall)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // 搜索深度
+                Text("Pikafish搜索深度", style = MaterialTheme.typography.titleSmall)
                 Slider(
-                    value = aiDifficulty.toFloat(),
-                    onValueChange = { aiDifficulty = it.toInt() },
-                    valueRange = 1f..5f,
-                    steps = 3
+                    value = searchDepth.toFloat(),
+                    onValueChange = {
+                        searchDepth = it.toInt()
+                        onDepthChange(it.toInt())
+                    },
+                    valueRange = 1f..30f,
+                    steps = 28
                 )
                 Text(
-                    text = when (aiDifficulty) {
-                        1 -> "简单"
-                        2 -> "入门"
-                        3 -> "中等"
-                        4 -> "困难"
-                        5 -> "大师"
-                        else -> ""
-                    }
+                    text = "深度: $searchDepth",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
                 )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // 显示坐标
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("显示坐标")
-                    Switch(
-                        checked = showCoordinates,
-                        onCheckedChange = { showCoordinates = it }
-                    )
-                }
+
+                HorizontalDivider()
+
+                Text(
+                    text = "象棋 Pro v1.0.0\nPowered by Pikafish",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("确定")
-            }
+            TextButton(onClick = onDismiss) { Text("确定") }
         }
     )
 }

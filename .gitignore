@@ -73,3 +73,9 @@ lint/tmp/
 /.idea/modules.xml
 /.idea/runConfigurations
 /.idea/navEditor.xml
+
+# 引擎原始文件（已复制到assets）
+皮卡鱼*/
+
+# 临时脚本
+*.sh

@@ -1,5 +1,7 @@
 package com.chesspro.app.core.chess
 
+import com.chesspro.app.core.engine.FenConverter
+
 /**
  * 象棋棋盘类
  * 管理棋局状态、棋子、走法历史
@@ -31,9 +33,6 @@ class ChessBoard {
 
     // 河界
     private val riverLine = 4..5
-
-    // 回调函数（用于AI验证走法）
-    var isValidMove: ((Move) -> Boolean)? = null
 
     /**
      * 构造函数：初始化棋盘
@@ -498,6 +497,58 @@ class ChessBoard {
      * 获取最后一步走法
      */
     fun getLastMove(): Move? = moveHistory.lastOrNull()
+
+    /**
+     * 添加棋子（摆棋模式）
+     */
+    fun addPiece(piece: ChessPiece) {
+        _pieces.removeAll { it.position == piece.position }
+        _pieces.add(piece)
+    }
+
+    /**
+     * 移除棋子（摆棋模式）
+     */
+    fun removePiece(position: Position): ChessPiece? {
+        val piece = _pieces.find { it.position == position }
+        if (piece != null) {
+            _pieces.remove(piece)
+        }
+        return piece
+    }
+
+    /**
+     * 清空棋盘
+     */
+    fun clearBoard() {
+        _pieces.clear()
+        moveHistory.clear()
+        currentPlayer = PieceColor.RED
+        gameState = GameState.PLAYING
+        isInCheck = false
+    }
+
+    /**
+     * 将当前棋盘转换为FEN字符串
+     */
+    fun toFen(): String {
+        return FenConverter.boardToFen(_pieces, currentPlayer)
+    }
+
+    /**
+     * 从FEN字符串加载棋盘
+     */
+    fun fromFen(fen: String) {
+        val (pieces, player) = FenConverter.fenToBoard(fen)
+        setPosition(pieces, player)
+    }
+
+    /**
+     * 设置当前执子方
+     */
+    fun setCurrentPlayer(color: PieceColor) {
+        currentPlayer = color
+    }
 }
 
 /**
@@ -510,12 +561,3 @@ enum class GameState {
     DRAW            // 和棋
 }
 
-/**
- * 扩展函数：获取对方颜色
- */
-private fun PieceColor.other(): PieceColor {
-    return when (this) {
-        PieceColor.RED -> PieceColor.BLACK
-        PieceColor.BLACK -> PieceColor.RED
-    }
-}

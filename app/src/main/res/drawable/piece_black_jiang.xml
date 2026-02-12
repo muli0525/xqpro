@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 黑方 将 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="80dp"
+    android:height="80dp"
+    android:viewportWidth="80"
+    android:viewportHeight="80">
+
+    <!-- 棋子阴影 -->
+    <path
+        android:fillColor="#40000000"
+        android:pathData="M40,8 L40,72 A32,32 0 0,1 8,40 L8,36 A36,36 0 0,0 44,4 L44,8 A28,28 0 0,1 40,8"/>
+
+    <!-- 棋子主体 -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M40,8 L40,68 A32,32 0 0,1 8,36 L8,40 A36,36 0 0,0 72,40 L72,36 A32,32 0 0,1 40,8"/>
+
+    <!-- 棋子顶部高光 -->
+    <path
+        android:fillColor="#4A4A4A"
+        android:pathData="M40,10 A30,30 0 0,1 15,18 L15,25 A25,25 0 0,0 40,20 A25,25 0 0,0 60,22 L60,18 A28,28 0 0,1 40,10"/>
+
+    <!-- 内边框 -->
+    <path
+        android:fillColor="#000000"
+        android:strokeWidth="1"
+        android:pathData="M40,14 L40,62 A26,26 0 0,1 14,36 L14,40 A30,30 0 0,0 66,40 L66,36 A26,26 0 0,1 40,14"/>
+
+    <!-- 文字：将 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,28 L46,28 L46,30 L34,30 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.5"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,22 C35,22 32,27 32,32 C32,38 36,42 40,45 C44,42 48,38 48,32 C48,27 45,22 40,22 M40,26 C43,26 45,29 45,32 C45,35 43,38 40,38 C37,38 35,35 35,32 C35,29 37,26 40,26"/>
+</vector>

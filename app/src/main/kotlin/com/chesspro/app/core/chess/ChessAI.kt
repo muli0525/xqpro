@@ -214,42 +214,6 @@ class ChessAI(private val maxDepth: Int = 3) {
      * 获取指定方的所有合法走法
      */
     private fun getAllValidMoves(board: ChessBoard, color: PieceColor): List<Move> {
-        val moves = mutableListOf<Move>()
-        val pieces = board.pieces.filter { it.color == color }
-        
-        for (piece in pieces) {
-            for (y in 0..9) {
-                for (x in 0..8) {
-                    val to = Position(x, y)
-                    val move = Move(piece.position, to, piece)
-                    if (board.isValidMove?.invoke(move) == true || isMoveValid(board, move)) {
-                        moves.add(move)
-                    }
-                }
-            }
-        }
-        
-        return moves
-    }
-    
-    /**
-     * 检查走法是否合法（临时方法）
-     */
-    private fun isMoveValid(board: ChessBoard, move: Move): Boolean {
-        // 简化的合法性检查
-        val piece = board.getPieceAt(move.from) ?: return false
-        val dx = kotlin.math.abs(move.to.x - move.from.x)
-        val dy = kotlin.math.abs(move.to.y - move.from.y)
-        
-        // 基本移动规则
-        return when (piece.type) {
-            PieceType.JU -> dx == 0 || dy == 0
-            PieceType.MA -> (dx == 1 && dy == 2) || (dx == 2 && dy == 1)
-            PieceType.XIANG -> dx == 2 && dy == 2
-            PieceType.SHI -> dx + dy == 1
-            PieceType.JIANG -> dx + dy == 1
-            PieceType.PAO -> dx == 0 || dy == 0
-            PieceType.BING -> dx + dy == 1
-        }
+        return board.getValidMoves(color)
     }
 }

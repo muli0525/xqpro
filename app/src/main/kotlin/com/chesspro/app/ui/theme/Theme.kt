@@ -23,46 +23,77 @@ val ChessBoardGreen = Color(0xFF81C784)
 val ChessBoardLightGreen = Color(0xFFA5D6A7)
 val ChessGold = Color(0xFFFFD700)
 
+// 木纹色系
+val WoodLight = Color(0xFFF5DEB3)
+val WoodMedium = Color(0xFFE8D4A8)
+val WoodDark = Color(0xFFDEB887)
+val WoodBorder = Color(0xFF8B4513)
+val WoodBorderLight = Color(0xFFA0522D)
+
+// 棋子颜色
+val PieceRed = Color(0xFFC41E3A)
+val PieceRedDark = Color(0xFF8B0000)
+val PieceRedHighlight = Color(0xFFE8D0D5)
+val PieceBlack = Color(0xFF1A1A1A)
+val PieceBlackHighlight = Color(0xFF4A4A4A)
+
+// AI建议颜色
+val SuggestionGreen = Color(0xFF4CAF51)
+val SuggestionBlue = Color(0xFF2196F3)
+
 private val DarkColorScheme = darkColorScheme(
     primary = ChessGold,
     secondary = ChessRed,
     tertiary = ChessBlack,
     background = Color(0xFF1B1B1B),
-    surface = Color(0xFF2D2D2D)
+    surface = Color(0xFF2D2D2D),
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = Color.White,
+    onSurface = Color.White
 )
 
 private val LightColorScheme = lightColorScheme(
     primary = ChessBlack,
     secondary = ChessRed,
     tertiary = ChessGold,
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE)
+    background = WoodLight,
+    surface = Color.White,
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onTertiary = Color.Black,
+    onBackground = Color(0xFF1B1B1B),
+    onSurface = Color(0xFF1B1B1B),
+    primaryContainer = WoodMedium,
+    onPrimaryContainer = ChessBlack,
+    secondaryContainer = PieceRed.copy(alpha = 0.1f),
+    onSecondaryContainer = ChessRed,
+    tertiaryContainer = ChessGold.copy(alpha = 0.2f),
+    onTertiaryContainer = ChessBlack
 )
 
 @Composable
 fun ChineseChessProTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // 关闭动态颜色，使用自定义主题
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
-    
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            (view.context as? Activity)?.window?.let { window ->
+                window.statusBarColor = colorScheme.primary.toArgb()
+                WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            }
         }
     }
-    
+
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
