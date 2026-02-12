@@ -33,6 +33,39 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Download Pikafish engine binaries
+        run: |
+          mkdir -p app/src/main/assets
+          # Download latest Pikafish Android ARM64 binaries
+          PIKAFISH_VERSION="2024-11-15"
+          BASE_URL="https://github.com/official-pikafish/Pikafish/releases/download/${PIKAFISH_VERSION}"
+          
+          # Try downloading armv8 binary
+          echo "Downloading pikafish-armv8..."
+          curl -L -f -o app/src/main/assets/pikafish-armv8 \
+            "${BASE_URL}/pikafish-android-armv8" || \
+          curl -L -f -o app/src/main/assets/pikafish-armv8 \
+            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish-android-armv8" || \
+          echo "WARNING: Could not download pikafish-armv8"
+          
+          # Try downloading armv8-dotprod binary  
+          echo "Downloading pikafish-armv8-dotprod..."
+          curl -L -f -o app/src/main/assets/pikafish-armv8-dotprod \
+            "${BASE_URL}/pikafish-android-armv8-dotprod" || \
+          curl -L -f -o app/src/main/assets/pikafish-armv8-dotprod \
+            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish-android-armv8-dotprod" || \
+          echo "WARNING: Could not download pikafish-armv8-dotprod"
+          
+          # Download NNUE evaluation file
+          echo "Downloading pikafish.nnue..."
+          curl -L -f -o app/src/main/assets/pikafish.nnue \
+            "https://github.com/official-pikafish/Pikafish/releases/latest/download/pikafish.nnue" || \
+          echo "WARNING: Could not download pikafish.nnue"
+          
+          # Show downloaded files
+          echo "=== Assets directory ==="
+          ls -la app/src/main/assets/ || echo "No assets"
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 

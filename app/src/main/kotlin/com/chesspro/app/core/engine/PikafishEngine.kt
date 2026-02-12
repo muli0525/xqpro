@@ -76,8 +76,20 @@ class PikafishEngine(private val context: Context) {
             }
             enginePath = engineFile.absolutePath
 
-            // 检查NNUE文件
+            // 提取NNUE文件（从assets复制到filesDir）
             val nnueFile = File(context.filesDir, NNUE_FILE)
+            if (!nnueFile.exists()) {
+                try {
+                    context.assets.open(NNUE_FILE).use { input ->
+                        FileOutputStream(nnueFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    Log.i(TAG, "NNUE文件提取成功: ${nnueFile.absolutePath}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "NNUE文件不存在于assets中，使用经典评估")
+                }
+            }
             if (nnueFile.exists()) {
                 nnuePath = nnueFile.absolutePath
             }

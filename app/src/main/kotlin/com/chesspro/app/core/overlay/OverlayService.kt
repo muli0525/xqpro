@@ -21,6 +21,7 @@ import com.chesspro.app.core.capture.BoardRecognizer
 import com.chesspro.app.core.capture.BoardRect
 import com.chesspro.app.core.capture.ScreenCaptureService
 import com.chesspro.app.core.engine.AnalysisResult
+import com.chesspro.app.core.engine.EngineState
 import com.chesspro.app.core.engine.FenConverter
 import com.chesspro.app.core.engine.PikafishEngine
 import kotlinx.coroutines.*
@@ -102,6 +103,16 @@ class OverlayService : Service() {
                 startForeground(NOTIFICATION_ID, createNotification())
                 // 在前台服务启动后初始化截屏（Android 14要求）
                 screenCapture?.initialize()
+                // 初始化并启动引擎
+                serviceScope.launch {
+                    val ok = engine?.initialize() ?: false
+                    if (ok) {
+                        engine?.start()
+                        Log.i(TAG, "引擎启动完成")
+                    } else {
+                        Log.e(TAG, "引擎初始化失败（可能缺少引擎文件）")
+                    }
+                }
                 showButton()
                 showArrowOverlay()
             }
@@ -383,14 +394,42 @@ class OverlayService : Service() {
                 lastFen = result.fen
                 lastBoardRect = result.boardRect
 
-                arrowOverlay?.setHint("分析中...")
                 arrowOverlay?.setArrow(null, null)
 
-                // 发送给引擎分析
+                // 检查引擎状态
+                val engineOk = engine?.engineState?.value
+                if (engineOk == null || engineOk == EngineState.ERROR || engineOk == EngineState.IDLE) {
+                    arrowOverlay?.setHint("引擎未就绪，识别${result.pieces.size}子 FEN已生成")
+                    Log.w(TAG, "Engine not ready: $engineOk, FEN: ${result.fen}")
+                    // 5秒后清除提示
+                    serviceScope.launch {
+                        delay(5000)
+                        arrowOverlay?.setHint(null)
+                    }
+                    isAnalyzing = false
+                    return@launch
+                }
+
+                arrowOverlay?.setHint("分析中...")
+
+                // 发送给引擎分析（带超时）
                 engine?.analyze(result.fen)
+
+                // 超时保护 - 10秒没结果就放弃
+                serviceScope.launch {
+                    delay(10000)
+                    if (isAnalyzing) {
+                        Log.w(TAG, "分析超时，强制停止")
+                        engine?.stopAnalysis()
+                        arrowOverlay?.setHint("分析超时")
+                        isAnalyzing = false
+                        delay(2000)
+                        arrowOverlay?.setHint(null)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "截图分析失败", e)
-                arrowOverlay?.setHint("识别失败")
+                arrowOverlay?.setHint("识别失败: ${e.message}")
                 isAnalyzing = false
             } finally {
                 buttonView?.visibility = View.VISIBLE
