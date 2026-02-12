@@ -493,7 +493,7 @@ private fun SettingsPage() {
                         tint = TealPrimary, modifier = Modifier.size(20.dp))
                 }
 
-                HorizontalDivider(color = Color(0xFFEEEEEE))
+                Divider(color = Color(0xFFEEEEEE))
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text("引擎配置", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
