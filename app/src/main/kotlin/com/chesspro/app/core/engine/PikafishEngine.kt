@@ -60,6 +60,10 @@ class PikafishEngine(private val context: Context) {
     private var enginePath: String = ""
     private var nnuePath: String = ""
 
+    // 内置引擎（纯Kotlin，作为后备）
+    private var builtInEngine: XiangqiEngine? = null
+    private var useBuiltIn = false
+
     /**
      * 初始化引擎（提取二进制文件）
      */
@@ -67,35 +71,37 @@ class PikafishEngine(private val context: Context) {
         try {
             _engineState.value = EngineState.INITIALIZING
 
-            // 提取引擎二进制文件
+            // 尝试提取Pikafish二进制文件
             val engineFile = extractEngine()
-            if (engineFile == null) {
-                Log.e(TAG, "引擎文件提取失败")
-                _engineState.value = EngineState.ERROR
-                return@withContext false
-            }
-            enginePath = engineFile.absolutePath
+            if (engineFile != null) {
+                enginePath = engineFile.absolutePath
+                useBuiltIn = false
+                Log.i(TAG, "Pikafish二进制提取成功: $enginePath")
 
-            // 提取NNUE文件（从assets复制到filesDir）
-            val nnueFile = File(context.filesDir, NNUE_FILE)
-            if (!nnueFile.exists()) {
-                try {
-                    context.assets.open(NNUE_FILE).use { input ->
-                        FileOutputStream(nnueFile).use { output ->
-                            input.copyTo(output)
+                // 提取NNUE文件
+                val nnueFile = File(context.filesDir, NNUE_FILE)
+                if (!nnueFile.exists()) {
+                    try {
+                        context.assets.open(NNUE_FILE).use { input ->
+                            FileOutputStream(nnueFile).use { output ->
+                                input.copyTo(output)
+                            }
                         }
+                        Log.i(TAG, "NNUE文件提取成功")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "NNUE文件不存在，使用经典评估")
                     }
-                    Log.i(TAG, "NNUE文件提取成功: ${nnueFile.absolutePath}")
-                } catch (e: Exception) {
-                    Log.w(TAG, "NNUE文件不存在于assets中，使用经典评估")
                 }
-            }
-            if (nnueFile.exists()) {
-                nnuePath = nnueFile.absolutePath
+                if (nnueFile.exists()) nnuePath = nnueFile.absolutePath
+            } else {
+                // Pikafish不可用，使用内置Kotlin引擎
+                Log.w(TAG, "Pikafish不可用，切换到内置引擎")
+                builtInEngine = XiangqiEngine()
+                useBuiltIn = true
             }
 
             _engineState.value = EngineState.READY
-            Log.i(TAG, "引擎初始化成功: $enginePath")
+            Log.i(TAG, "引擎初始化成功, 内置=$useBuiltIn")
             return@withContext true
         } catch (e: Exception) {
             Log.e(TAG, "引擎初始化失败", e)
@@ -108,6 +114,13 @@ class PikafishEngine(private val context: Context) {
      * 启动引擎进程
      */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
+        // 内置引擎不需要启动进程
+        if (useBuiltIn) {
+            _engineState.value = EngineState.RUNNING
+            Log.i(TAG, "内置引擎已就绪")
+            return@withContext true
+        }
+
         if (enginePath.isEmpty()) {
             Log.e(TAG, "引擎路径为空，请先初始化")
             return@withContext false
@@ -169,15 +182,15 @@ class PikafishEngine(private val context: Context) {
             readJob?.cancel()
             readJob = null
 
-            sendCommand("quit")
-
-            processWriter?.close()
-            processReader?.close()
-            process?.destroyForcibly()
-
-            processWriter = null
-            processReader = null
-            process = null
+            if (!useBuiltIn) {
+                sendCommand("quit")
+                processWriter?.close()
+                processReader?.close()
+                process?.destroyForcibly()
+                processWriter = null
+                processReader = null
+                process = null
+            }
 
             _engineState.value = EngineState.IDLE
         } catch (e: Exception) {
@@ -200,10 +213,45 @@ class PikafishEngine(private val context: Context) {
         _engineState.value = EngineState.ANALYZING
         _analysisResult.value = AnalysisResult(isAnalyzing = true)
 
-        // 设置局面
-        sendCommand("position fen $fen")
+        if (useBuiltIn) {
+            // 使用内置Kotlin引擎
+            engineScope.launch {
+                try {
+                    val engine = builtInEngine ?: XiangqiEngine().also { builtInEngine = it }
+                    engine.parseFEN(fen)
+                    val searchTime = if (timeMs > 0) timeMs else this@PikafishEngine.searchTime
+                    val searchDepth = if (depth > 0) depth else 4
+                    val result = engine.findBestMove(maxDepth = searchDepth, timeLimitMs = searchTime)
 
-        // 开始搜索 - 默认用时间限制(更快出结果)
+                    val cpScore = result.score
+                    val scoreStr = if (cpScore >= 0) "+${String.format("%.2f", cpScore / 100.0)}"
+                                   else String.format("%.2f", cpScore / 100.0)
+
+                    _analysisResult.value = AnalysisResult(
+                        bestMove = result.bestMove,
+                        depth = result.depth,
+                        score = cpScore,
+                        scoreType = "cp",
+                        scoreDisplay = scoreStr,
+                        nodes = result.nodes,
+                        nps = if (result.timeMs > 0) result.nodes * 1000 / result.timeMs else 0,
+                        timeMs = result.timeMs,
+                        pvMoves = listOfNotNull(result.bestMove),
+                        isAnalyzing = false
+                    )
+                    _engineState.value = EngineState.RUNNING
+                    Log.i(TAG, "内置引擎: best=${result.bestMove} score=$cpScore depth=${result.depth}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "内置引擎分析失败", e)
+                    _analysisResult.value = AnalysisResult(isAnalyzing = false)
+                    _engineState.value = EngineState.RUNNING
+                }
+            }
+            return
+        }
+
+        // Pikafish UCI 通信
+        sendCommand("position fen $fen")
         val goCommand = buildString {
             append("go")
             if (depth > 0) {
@@ -211,7 +259,6 @@ class PikafishEngine(private val context: Context) {
             } else if (timeMs > 0) {
                 append(" movetime $timeMs")
             } else {
-                // 默认使用时间限制，比固定深度更灵活
                 append(" movetime $searchTime")
             }
         }
@@ -247,7 +294,7 @@ class PikafishEngine(private val context: Context) {
      * 停止当前分析
      */
     fun stopAnalysis() {
-        sendCommand("stop")
+        if (!useBuiltIn) sendCommand("stop")
     }
 
     /**

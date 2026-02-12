@@ -59,12 +59,12 @@ class BoardRecognizer {
             val cellW = boardWidth.toFloat() / (COLS - 1)
             val cellH = boardHeight.toFloat() / (ROWS - 1)
 
-            // Step 3: 在每个交叉点检测棋子（带置信度）
-            data class PieceCandidate(
-                val type: PieceType, val color: PieceColor,
+            // Step 3: 在每个交叉点检测棋子（带置信度和原始特征）
+            data class RawCandidate(
+                val gridDensity: FloatArray, val color: PieceColor,
                 val position: Position, val confidence: Float
             )
-            val candidates = mutableListOf<PieceCandidate>()
+            val candidates = mutableListOf<RawCandidate>()
             for (row in 0 until ROWS) {
                 for (col in 0 until COLS) {
                     val cx = (boardRect.left + col * cellW).toInt()
@@ -73,7 +73,7 @@ class BoardRecognizer {
 
                     val pieceInfo = detectPieceAt(bitmap, cx, cy, radius)
                     if (pieceInfo != null) {
-                        candidates.add(PieceCandidate(
+                        candidates.add(RawCandidate(
                             pieceInfo.first, pieceInfo.second,
                             Position(col, row), pieceInfo.third
                         ))
@@ -82,16 +82,16 @@ class BoardRecognizer {
             }
 
             // 中国象棋最多32子，如果检测超过32就按置信度排序取前32
-            val pieces = if (candidates.size > 32) {
+            val trimmed = if (candidates.size > 32) {
                 Log.w(TAG, "检测到${candidates.size}个候选，裁剪到32")
-                candidates.sortedByDescending { it.confidence }
-                    .take(32)
-                    .map { RecognizedPiece(it.type, it.color, it.position) }
-                    .toMutableList()
-            } else {
-                candidates.map { RecognizedPiece(it.type, it.color, it.position) }
-                    .toMutableList()
-            }
+                candidates.sortedByDescending { it.confidence }.take(32)
+            } else candidates
+
+            // Step 3.5: 用位置+墨水特征综合分类棋子类型
+            val pieces = trimmed.map { c ->
+                val type = classifyPieceType(c.gridDensity, c.position, c.color)
+                RecognizedPiece(type, c.color, c.position)
+            }.toMutableList()
 
             // Step 4: 位置约束校正
             val corrected = applyPositionConstraints(pieces)
@@ -314,7 +314,7 @@ class BoardRecognizer {
      * 检测指定位置是否有棋子
      * 核心改进：使用亮度对比检测棋子体 + 宽松的颜色墨水检测
      */
-    private fun detectPieceAt(bitmap: Bitmap, cx: Int, cy: Int, radius: Int): Triple<PieceType, PieceColor, Float>? {
+    private fun detectPieceAt(bitmap: Bitmap, cx: Int, cy: Int, radius: Int): Triple<FloatArray, PieceColor, Float>? {
         val w = bitmap.width
         val h = bitmap.height
 
@@ -396,7 +396,6 @@ class BoardRecognizer {
         if (pieceSignal < 0.20f) return null       // 总信号太弱
 
         val isRed = redInkCount > darkInkCount
-        val isBlack = darkInkCount >= redInkCount
 
         val color = if (isRed) PieceColor.RED else PieceColor.BLACK
 
@@ -405,75 +404,108 @@ class BoardRecognizer {
             if (gridTotal[i] > 0) gridInk[i].toFloat() / gridTotal[i] else 0f
         }
 
-        val topInk = gridDensity[0] + gridDensity[1] + gridDensity[2]
-        val bottomInk = gridDensity[6] + gridDensity[7] + gridDensity[8]
-        val midInk = gridDensity[3] + gridDensity[4] + gridDensity[5]
-        val centerDensity = gridDensity[4]
-
-        val leftInk = gridDensity[0] + gridDensity[3] + gridDensity[6]
-        val rightInk = gridDensity[2] + gridDensity[5] + gridDensity[8]
-        val symmetry = 1f - kotlin.math.abs(leftInk - rightInk) / (leftInk + rightInk + 0.001f)
-
-        val type = classifyPieceType(inkRatio, topInk, midInk, bottomInk, centerDensity, symmetry)
-
         // 置信度 = 棋子体占比 + 墨水占比（越高越可能是棋子）
         val confidence = pieceBodyRatio * 2f + inkRatio * 5f
 
-        return Triple(type, color, confidence)
+        // 返回原始特征，类型由外层根据位置+特征综合判定
+        return Triple(gridDensity, color, confidence)
     }
 
     /**
-     * 基于字符密度特征分类棋子类型
-     * 不同汉字笔画密度分布不同：
-     * - 兵/卒: 笔画少，密度低，上下对称
-     * - 士/仕: 笔画少，密度低
-     * - 将/帅: 中等密度，较对称
-     * - 车/車: 中等密度，上密下疏
-     * - 马/馬: 中高密度，左右不太对称
-     * - 象/相: 较高密度
-     * - 炮/砲: 高密度，结构复杂
+     * 基于位置+墨水特征综合分类棋子类型
+     * 使用评分系统：位置约束（硬规则）+ 墨水特征（软证据）
      */
     private fun classifyPieceType(
-        inkRatio: Float,
-        topInk: Float,
-        midInk: Float,
-        bottomInk: Float,
-        centerDensity: Float,
-        symmetry: Float
+        gridDensity: FloatArray,
+        position: Position,
+        color: PieceColor
     ): PieceType {
-        val totalDensity = topInk + midInk + bottomInk
+        val col = position.x
+        val row = position.y
+        val isRed = color == PieceColor.RED
 
-        return when {
-            // 极低密度 -> 兵/卒 或 士/仕
-            totalDensity < 0.6f -> {
-                if (symmetry > 0.7f) PieceType.BING else PieceType.SHI
-            }
-            // 低密度
-            totalDensity < 0.9f -> {
-                when {
-                    topInk > bottomInk * 1.3f -> PieceType.JU  // 车: 上密下疏
-                    centerDensity > 0.15f -> PieceType.JIANG    // 将: 中心密
-                    else -> PieceType.SHI
-                }
-            }
-            // 中等密度
-            totalDensity < 1.3f -> {
-                when {
-                    symmetry < 0.6f -> PieceType.MA             // 马: 不对称
-                    topInk > bottomInk * 1.2f -> PieceType.JU   // 车
-                    bottomInk > topInk * 1.2f -> PieceType.JIANG // 将
-                    else -> PieceType.XIANG                      // 象
-                }
-            }
-            // 高密度 -> 炮/象/马
-            else -> {
-                when {
-                    symmetry > 0.7f -> PieceType.PAO            // 炮: 对称且密
-                    midInk > topInk && midInk > bottomInk -> PieceType.XIANG
-                    else -> PieceType.MA
-                }
-            }
+        val topInk = gridDensity[0] + gridDensity[1] + gridDensity[2]
+        val midInk = gridDensity[3] + gridDensity[4] + gridDensity[5]
+        val bottomInk = gridDensity[6] + gridDensity[7] + gridDensity[8]
+        val leftInk = gridDensity[0] + gridDensity[3] + gridDensity[6]
+        val rightInk = gridDensity[2] + gridDensity[5] + gridDensity[8]
+        val centerDensity = gridDensity[4]
+        val totalDensity = topInk + midInk + bottomInk
+        val symmetry = 1f - kotlin.math.abs(leftInk - rightInk) / (leftInk + rightInk + 0.001f)
+
+        // 位置信息
+        val homeRow = if (isRed) 9 else 0
+        val inPalace = col in 3..5 &&
+                (if (isRed) row in 7..9 else row in 0..2)
+        val onOwnHalf = if (isRed) row >= 5 else row <= 4
+
+        // 每个棋子类型评分: [将, 士, 象, 马, 车, 炮, 兵]
+        val s = FloatArray(7)
+
+        // === 将/帅 (index 0) ===
+        if (inPalace) s[0] += 2f
+        if (col == 4 && (row == homeRow || (isRed && row in 7..9) || (!isRed && row in 0..2))) s[0] += 2f
+        if (centerDensity > 0.10f) s[0] += 1f
+        if (totalDensity > 0.7f) s[0] += 0.5f
+        if (!inPalace) s[0] = -99f
+
+        // === 士/仕 (index 1) ===
+        if (inPalace) s[1] += 2f
+        if (totalDensity < 0.55f) s[1] += 2.5f  // 士 笔画极少
+        if (totalDensity < 0.4f) s[1] += 1f
+        if (!inPalace) s[1] = -99f
+
+        // === 象/相 (index 2) ===
+        if (onOwnHalf) s[2] += 1f
+        if (!onOwnHalf) s[2] = -99f  // 象不能过河
+        if (totalDensity > 0.7f) s[2] += 1f
+        // 象的常见位置
+        if (col in setOf(0, 2, 4, 6, 8) && onOwnHalf) s[2] += 0.5f
+        if (inPalace) s[2] -= 2f  // 象一般不在九宫
+
+        // === 马 (index 3) ===
+        if (symmetry < 0.55f) s[3] += 2.5f  // 马字左右不对称
+        if (totalDensity > 0.7f) s[3] += 0.5f
+        if (leftInk > rightInk * 1.3f) s[3] += 1f  // 馬左重右轻
+        // 起始位置加分
+        if (row == homeRow && (col == 1 || col == 7)) s[3] += 1f
+
+        // === 车 (index 4) ===
+        // 车字特征: 上中下都有横画，较对称
+        if (topInk > 0.2f && midInk > 0.15f && bottomInk > 0.15f) s[4] += 1.5f
+        if (symmetry > 0.65f && totalDensity in 0.5f..1.3f) s[4] += 1f
+        // 起始位置
+        if (row == homeRow && (col == 0 || col == 8)) s[4] += 2f
+
+        // === 炮 (index 5) ===
+        if (totalDensity > 0.8f) s[5] += 0.5f
+        if (leftInk > 0.3f && rightInk > 0.3f) s[5] += 1f
+        // 炮的常见位置
+        val cannonRow = if (isRed) 7 else 2
+        if (row == cannonRow && (col == 1 || col == 7)) s[5] += 2.5f
+
+        // === 兵/卒 (index 6) ===
+        if (totalDensity < 0.65f) s[6] += 1.5f
+        if (totalDensity < 0.5f) s[6] += 1f
+        // 兵/卒的典型行: 红兵在3-6行，黑卒在3-6行
+        val pawnStartRow = if (isRed) 6 else 3
+        if (row == pawnStartRow && col % 2 == 0) s[6] += 2f
+        // 过河的兵
+        val crossed = if (isRed) row <= 4 else row >= 5
+        if (crossed && totalDensity < 0.8f) s[6] += 1f
+        if (topInk > bottomInk * 1.1f && totalDensity < 0.8f) s[6] += 0.5f
+
+        // 如果在九宫里，只可能是将或士
+        if (inPalace) {
+            s[3] -= 1f; s[4] -= 1f; s[5] -= 1f; s[6] -= 1f
         }
+
+        val types = arrayOf(
+            PieceType.JIANG, PieceType.SHI, PieceType.XIANG,
+            PieceType.MA, PieceType.JU, PieceType.PAO, PieceType.BING
+        )
+        val best = s.indices.maxByOrNull { s[it] } ?: 6
+        return types[best]
     }
 
     /**
