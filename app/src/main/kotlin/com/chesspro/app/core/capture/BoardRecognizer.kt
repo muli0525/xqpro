@@ -166,12 +166,15 @@ class BoardRecognizer {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 采样棋子区域的颜色
         var redCount = 0
         var blackCount = 0
         var whiteCount = 0
         var totalCount = 0
         var nonBoardCount = 0
+
+        // 用于字符密度分析的3x3网格
+        val gridInk = IntArray(9) // 3x3 grid ink counts
+        val gridTotal = IntArray(9)
 
         val sampleRadius = (radius * 0.7f).toInt()
         for (dy in -sampleRadius..sampleRadius step 2) {
@@ -187,32 +190,36 @@ class BoardRecognizer {
                 val b = Color.blue(pixel)
                 totalCount++
 
-                if (!isBoardColor(pixel)) {
-                    nonBoardCount++
-                }
+                if (!isBoardColor(pixel)) nonBoardCount++
 
-                // 红色棋子文字：红色系
+                // 计算网格位置 (0-2)
+                val gx = ((dx + sampleRadius) * 3 / (sampleRadius * 2 + 1)).coerceIn(0, 2)
+                val gy = ((dy + sampleRadius) * 3 / (sampleRadius * 2 + 1)).coerceIn(0, 2)
+                val gi = gy * 3 + gx
+                gridTotal[gi]++
+
+                val isInk: Boolean
+
                 if (r > 160 && g < 80 && b < 80) {
                     redCount++
-                }
-                // 黑色棋子文字：深色系
-                else if (r < 80 && g < 80 && b < 80) {
+                    isInk = true
+                } else if (r < 80 && g < 80 && b < 80) {
                     blackCount++
+                    isInk = true
+                } else {
+                    isInk = false
+                    if (r > 220 && g > 220 && b > 200) whiteCount++
                 }
-                // 白色/浅色（棋子底色）
-                else if (r > 220 && g > 220 && b > 200) {
-                    whiteCount++
-                }
+
+                if (isInk) gridInk[gi]++
             }
         }
 
         if (totalCount == 0) return null
 
-        // 有棋子的判断：该区域有足够多的非棋盘颜色像素（棋子挡住了背景）
         val nonBoardRatio = nonBoardCount.toFloat() / totalCount
-        if (nonBoardRatio < 0.3f) return null // 没有棋子
+        if (nonBoardRatio < 0.3f) return null
 
-        // 判断颜色
         val isRed = redCount > blackCount && redCount > totalCount * 0.03f
         val isBlack = blackCount > redCount && blackCount > totalCount * 0.03f
 
@@ -220,11 +227,83 @@ class BoardRecognizer {
 
         val color = if (isRed) PieceColor.RED else PieceColor.BLACK
 
-        // 暂时无法通过简单像素分析识别具体棋子类型
-        // 默认返回兵/卒，后续可以用更高级的识别方法
-        val type = PieceType.BING
+        // 计算字符密度特征
+        val inkCount = redCount + blackCount
+        val inkRatio = inkCount.toFloat() / totalCount
+
+        // 3x3网格密度
+        val gridDensity = FloatArray(9) { i ->
+            if (gridTotal[i] > 0) gridInk[i].toFloat() / gridTotal[i] else 0f
+        }
+
+        // 上半/下半密度比
+        val topInk = gridDensity[0] + gridDensity[1] + gridDensity[2]
+        val bottomInk = gridDensity[6] + gridDensity[7] + gridDensity[8]
+        val midInk = gridDensity[3] + gridDensity[4] + gridDensity[5]
+        val centerDensity = gridDensity[4]
+
+        // 左右对称度
+        val leftInk = gridDensity[0] + gridDensity[3] + gridDensity[6]
+        val rightInk = gridDensity[2] + gridDensity[5] + gridDensity[8]
+        val symmetry = 1f - kotlin.math.abs(leftInk - rightInk) / (leftInk + rightInk + 0.001f)
+
+        val type = classifyPieceType(inkRatio, topInk, midInk, bottomInk, centerDensity, symmetry)
 
         return Pair(type, color)
+    }
+
+    /**
+     * 基于字符密度特征分类棋子类型
+     * 不同汉字笔画密度分布不同：
+     * - 兵/卒: 笔画少，密度低，上下对称
+     * - 士/仕: 笔画少，密度低
+     * - 将/帅: 中等密度，较对称
+     * - 车/車: 中等密度，上密下疏
+     * - 马/馬: 中高密度，左右不太对称
+     * - 象/相: 较高密度
+     * - 炮/砲: 高密度，结构复杂
+     */
+    private fun classifyPieceType(
+        inkRatio: Float,
+        topInk: Float,
+        midInk: Float,
+        bottomInk: Float,
+        centerDensity: Float,
+        symmetry: Float
+    ): PieceType {
+        val totalDensity = topInk + midInk + bottomInk
+
+        return when {
+            // 极低密度 -> 兵/卒 或 士/仕
+            totalDensity < 0.6f -> {
+                if (symmetry > 0.7f) PieceType.BING else PieceType.SHI
+            }
+            // 低密度
+            totalDensity < 0.9f -> {
+                when {
+                    topInk > bottomInk * 1.3f -> PieceType.JU  // 车: 上密下疏
+                    centerDensity > 0.15f -> PieceType.JIANG    // 将: 中心密
+                    else -> PieceType.SHI
+                }
+            }
+            // 中等密度
+            totalDensity < 1.3f -> {
+                when {
+                    symmetry < 0.6f -> PieceType.MA             // 马: 不对称
+                    topInk > bottomInk * 1.2f -> PieceType.JU   // 车
+                    bottomInk > topInk * 1.2f -> PieceType.JIANG // 将
+                    else -> PieceType.XIANG                      // 象
+                }
+            }
+            // 高密度 -> 炮/象/马
+            else -> {
+                when {
+                    symmetry > 0.7f -> PieceType.PAO            // 炮: 对称且密
+                    midInk > topInk && midInk > bottomInk -> PieceType.XIANG
+                    else -> PieceType.MA
+                }
+            }
+        }
     }
 
     /**

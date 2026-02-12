@@ -6,6 +6,7 @@ import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +26,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chesspro.app.core.data.ChessRecordRepository
+import com.chesspro.app.core.data.RecordCategory
 import com.chesspro.app.core.overlay.OverlayService
 
 // Pro象棋风格颜色
@@ -169,7 +172,79 @@ private fun MainPage(
     onStartOverlay: () -> Unit,
     context: Context
 ) {
+    var selectedCategory by remember { mutableIntStateOf(0) }
+    val categories = RecordCategory.entries.toList()
+
     Column(modifier = Modifier.padding(16.dp)) {
+        // 分类标签栏 - 模仿Pro象棋顶部tab
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            categories.forEachIndexed { index, cat ->
+                Text(
+                    text = cat.label,
+                    fontSize = 14.sp,
+                    fontWeight = if (index == selectedCategory) FontWeight.Bold else FontWeight.Normal,
+                    color = if (index == selectedCategory) TealDark else TextSecondary,
+                    modifier = Modifier.clickable { selectedCategory = index }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 棋谱列表 (3列网格)
+        val records = ChessRecordRepository.getRecordsByCategory(categories[selectedCategory])
+        val rows = records.chunked(3)
+        rows.forEach { rowRecords ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowRecords.forEach { record ->
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 4.dp)
+                            .clickable { },
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(
+                                text = record.title,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = record.author,
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = record.date,
+                                fontSize = 9.sp,
+                                color = TealPrimary
+                            )
+                        }
+                    }
+                }
+                // 补足空列
+                repeat(3 - rowRecords.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // 功能入口横排
         Row(
             modifier = Modifier
@@ -177,21 +252,9 @@ private fun MainPage(
                 .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            FeatureEntry(
-                icon = Icons.Default.Cloud,
-                label = "云棋谱",
-                color = TealPrimary
-            )
-            FeatureEntry(
-                icon = Icons.Default.Link,
-                label = "连线",
-                color = TealPrimary
-            )
-            FeatureEntry(
-                icon = Icons.Default.GridOn,
-                label = "续盘",
-                color = TealPrimary
-            )
+            FeatureEntry(icon = Icons.Default.Cloud, label = "云棋谱", color = TealPrimary)
+            FeatureEntry(icon = Icons.Default.Link, label = "连线", color = TealPrimary)
+            FeatureEntry(icon = Icons.Default.GridOn, label = "续盘", color = TealPrimary)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
