@@ -50,11 +50,11 @@ class PikafishEngine(private val context: Context) {
     private val engineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var readJob: Job? = null
 
-    // 引擎配置
-    private var searchDepth = 18
-    private var searchTime = 5000L // 毫秒
-    private var threads = 1
-    private var hashSize = 64 // MB
+    // 引擎配置 - 优化速度
+    private var searchDepth = 20
+    private var searchTime = 3000L // 毫秒 (默认3秒快速出结果)
+    private var threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+    private var hashSize = 128 // MB
 
     // 引擎文件路径
     private var enginePath: String = ""
@@ -135,9 +135,10 @@ class PikafishEngine(private val context: Context) {
             sendCommand("uci")
             delay(500)
 
-            // 设置选项
+            // 设置选项 - 多线程+大哈希表加速
             sendCommand("setoption name Threads value $threads")
             sendCommand("setoption name Hash value $hashSize")
+            Log.i(TAG, "引擎配置: threads=$threads, hash=${hashSize}MB")
 
             // 如果有NNUE文件，设置路径
             if (nnuePath.isNotEmpty()) {
@@ -202,7 +203,7 @@ class PikafishEngine(private val context: Context) {
         // 设置局面
         sendCommand("position fen $fen")
 
-        // 开始搜索
+        // 开始搜索 - 默认用时间限制(更快出结果)
         val goCommand = buildString {
             append("go")
             if (depth > 0) {
@@ -210,9 +211,11 @@ class PikafishEngine(private val context: Context) {
             } else if (timeMs > 0) {
                 append(" movetime $timeMs")
             } else {
-                append(" depth $searchDepth")
+                // 默认使用时间限制，比固定深度更灵活
+                append(" movetime $searchTime")
             }
         }
+        Log.d(TAG, "分析命令: $goCommand")
         sendCommand(goCommand)
     }
 

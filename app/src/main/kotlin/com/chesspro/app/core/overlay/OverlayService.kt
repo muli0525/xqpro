@@ -548,6 +548,7 @@ class OverlayService : Service() {
                 }
 
                 statusText?.text = "分析中"
+                analysisStartTime = System.currentTimeMillis()
                 engine?.analyze(result.fen)
 
                 // 超时保护
@@ -570,23 +571,28 @@ class OverlayService : Service() {
         }
     }
 
+    // 分析计时
+    private var analysisStartTime = 0L
+
     /**
-     * 处理引擎分析结果
+     * 处理引擎分析结果 - 即时显示中间结果
      */
     private fun handleAnalysisResult(result: AnalysisResult) {
         if (result.bestMove != null && !result.isAnalyzing) {
+            // === 最终结果 ===
             currentBestMove = result.bestMove
             isAnalyzing = false
 
-            // 构建Pro象棋风格的分析文字
+            val elapsed = System.currentTimeMillis() - analysisStartTime
             val notation = buildNotation(result.bestMove)
-            val pvText = result.pvMoves.take(6).joinToString(" ") { buildNotation(it) }
+            val pvMoves = result.pvMoves.take(6).joinToString(" ") { buildNotation(it) }
+            val nodesK = if (result.nodes > 0) "${result.nodes / 1000}k" else ""
 
-            analysisText?.text = "|${result.depth} (${result.scoreDisplay}) [${result.nodes / 1000}k] $notation $pvText"
+            // 显示格式: |深度 (分数) [节点] 用时  最佳走法 后续走法...
+            analysisText?.text = "|${result.depth} ${result.scoreDisplay} [$nodesK] ${elapsed}ms  $notation $pvMoves"
 
-            // 更新状态
-            statusText?.text = "d${result.depth}"
-            statusText?.setBackgroundColor(Color.argb(120, 76, 175, 80))
+            statusText?.text = "✓ $notation"
+            statusText?.setBackgroundColor(Color.argb(200, 76, 175, 80))
 
             // 在实际棋盘上画箭头
             lastBoardRect?.let { drawArrow(result.bestMove, it) }
@@ -595,10 +601,26 @@ class OverlayService : Service() {
             miniBoardView?.updateBoard(lastPieces, result.bestMove)
 
         } else if (result.isAnalyzing && result.depth > 0) {
-            // 实时更新分析进度
-            val pvText = result.pvMoves.take(4).joinToString(" ") { buildNotation(it) }
-            analysisText?.text = "|${result.depth} (${result.scoreDisplay}) [${result.nodes / 1000}k] $pvText"
+            // === 中间结果 - 即时显示，不等最终结果 ===
+            val pvMoves = result.pvMoves.take(4).joinToString(" ") { buildNotation(it) }
+            val nodesK = if (result.nodes > 0) "${result.nodes / 1000}k" else ""
+
+            analysisText?.text = "|${result.depth} ${result.scoreDisplay} [$nodesK] $pvMoves"
             statusText?.text = "d${result.depth}"
+
+            // 深度>=8就开始画箭头（不等最终结果，秒出）
+            if (result.depth >= 8 && result.pvMoves.isNotEmpty()) {
+                val firstMove = result.pvMoves[0]
+                if (firstMove.length >= 4 && firstMove != currentBestMove) {
+                    currentBestMove = firstMove
+                    lastBoardRect?.let { drawArrow(firstMove, it) }
+                    miniBoardView?.updateBoard(lastPieces, firstMove)
+
+                    val notation = buildNotation(firstMove)
+                    statusText?.text = "d${result.depth} $notation"
+                    statusText?.setBackgroundColor(Color.argb(160, 38, 198, 176))
+                }
+            }
         }
     }
 
