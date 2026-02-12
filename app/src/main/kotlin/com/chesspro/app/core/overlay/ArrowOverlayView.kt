@@ -17,28 +17,28 @@ class ArrowOverlayView(context: Context) : View(context) {
     private var arrowFrom: PointF? = null
     private var arrowTo: PointF? = null
 
-    // 箭头样式
+    // 箭头样式 - Pro象棋风格绿色
     private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 230, 50, 50) // 红色半透明
+        color = Color.argb(200, 38, 198, 176) // 青绿色
         style = Paint.Style.STROKE
-        strokeWidth = 8f
+        strokeWidth = 10f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
 
     private val arrowFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 230, 50, 50)
+        color = Color.argb(200, 38, 198, 176)
         style = Paint.Style.FILL
     }
 
-    // 起点/终点圆圈
+    // 起点/终点圆圈 - 绿色高亮
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(120, 230, 168, 23) // 金色半透明
+        color = Color.argb(100, 38, 198, 176)
         style = Paint.Style.FILL
     }
 
     private val circleBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 230, 168, 23)
+        color = Color.argb(220, 38, 198, 176)
         style = Paint.Style.STROKE
         strokeWidth = 4f
     }
