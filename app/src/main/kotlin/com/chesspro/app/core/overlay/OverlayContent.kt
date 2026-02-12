@@ -1,15 +1,11 @@
 package com.chesspro.app.core.overlay
 
-import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -17,21 +13,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.chesspro.app.ui.theme.ChessGold
-import com.chesspro.app.ui.theme.ChessRed
-import com.chesspro.app.ui.theme.SuggestionGreen
+
+private val DarkBg = Color(0xFF1E1E2E)
+private val DarkCard = Color(0xFF2A2A3C)
+private val AccentGold = Color(0xFFE6A817)
+private val AccentGreen = Color(0xFF4CAF50)
+private val AccentRed = Color(0xFFE53935)
+private val TextWhite = Color(0xFFEEEEEE)
+private val TextGray = Color(0xFF999999)
 
 /**
- * 悬浮窗内容
- * 可调整大小、显示分析结果
+ * 悬浮窗内容 - 紧凑型专业分析界面
  */
 @Composable
 fun OverlayContent(
@@ -42,420 +40,307 @@ fun OverlayContent(
     onResize: (Int, Int) -> Unit,
     onDrag: (Int, Int) -> Unit
 ) {
-    // 动画效果
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseAlpha"
-    )
-
     Card(
-        modifier = Modifier
-            .fillMaxSize()
-            .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(16.dp),
-                ambientColor = Color.Black.copy(alpha = 0.3f),
-                spotColor = Color.Black.copy(alpha = 0.4f)
-            )
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onDoubleTap = {
-                        // 双击放大/缩小
-                        if (state.width > 350) {
-                            onResize(300, 360)
-                        } else {
-                            onResize(400, 480)
-                        }
-                    }
-                )
-            },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFFF5F5F5).copy(alpha = pulseAlpha)
-        )
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkBg)
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // 标题栏
-            OverlayTitleBar(
-                state = state,
-                onClose = onClose,
-                onAnalyze = onAnalyze,
-                onDrag = onDrag
-            )
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 顶部标题栏
+            TitleBar(state = state, onClose = onClose, onAnalyze = onAnalyze)
 
-            // 内容区域
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                when {
-                    state.isAnalyzing -> {
-                        AnalyzingView()
-                    }
-                    state.bestMoves.isNotEmpty() -> {
-                        AnalysisResultView(
-                            state = state,
-                            onMoveClick = onMoveClick,
-                            onReAnalyze = onAnalyze
-                        )
-                    }
-                    else -> {
-                        ReadyView(onAnalyze = onAnalyze)
-                    }
-                }
+            // 主内容
+            when {
+                state.isAnalyzing -> AnalyzingContent(state)
+                state.bestMoves.isNotEmpty() -> ResultContent(state, onMoveClick, onAnalyze)
+                else -> IdleContent(onAnalyze)
             }
-
-            // 底部信息栏
-            BottomInfoBar(state = state)
         }
     }
 }
 
 /**
- * 标题栏
+ * 标题栏 - 深色紧凑
  */
 @Composable
-private fun OverlayTitleBar(
+private fun TitleBar(
     state: OverlayState,
     onClose: () -> Unit,
-    onAnalyze: () -> Unit,
-    onDrag: (Int, Int) -> Unit
+    onAnalyze: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                color = MaterialTheme.colorScheme.primary,
-                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-            )
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onLongPress = {
-                        // 长按显示操作菜单
-                    }
-                )
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .background(DarkCard)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左侧：标题和状态
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.Psychology,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
+        // 状态指示灯
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(
+                    color = when {
+                        state.isAnalyzing -> AccentGold
+                        state.bestMoves.isNotEmpty() -> AccentGreen
+                        else -> TextGray
+                    },
+                    shape = RoundedCornerShape(4.dp)
+                )
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // 标题
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "象棋分析",
+                color = TextWhite,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column {
-                Text(
-                    text = "象棋分析",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = state.analysisStatus,
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 10.sp
-                )
-            }
+            Text(
+                text = state.analysisStatus,
+                color = TextGray,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
 
-        // 右侧：操作按钮
-        Row {
-            IconButton(
-                onClick = onAnalyze,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "重新分析",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "关闭",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+        // 识别按钮
+        IconButton(
+            onClick = onAnalyze,
+            modifier = Modifier.size(28.dp)
+        ) {
+            Icon(
+                Icons.Default.CameraAlt,
+                contentDescription = "识别",
+                tint = AccentGold,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+
+        // 关闭按钮
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.size(28.dp)
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "关闭",
+                tint = TextGray,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }
 
 /**
- * 分析中视图
+ * 分析中状态
  */
 @Composable
-private fun AnalyzingView() {
+private fun AnalyzingContent(state: OverlayState) {
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(48.dp),
-            color = ChessGold
+            modifier = Modifier.size(32.dp),
+            color = AccentGold,
+            strokeWidth = 3.dp
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "AI正在分析...",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
+            text = state.analysisStatus,
+            fontSize = 13.sp,
+            color = TextWhite,
+            textAlign = TextAlign.Center
         )
-        Text(
-            text = "请稍候",
-            fontSize = 12.sp,
-            color = Color.Gray
-        )
+        if (state.evaluation != "0.00") {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = state.evaluation,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentGold
+            )
+        }
     }
 }
 
 /**
- * 分析结果视图
+ * 分析结果
  */
 @Composable
-private fun AnalysisResultView(
+private fun ResultContent(
     state: OverlayState,
     onMoveClick: (SuggestedMove) -> Unit,
-    onReAnalyze: () -> Unit = {}
+    onReAnalyze: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(12.dp)
+            .padding(8.dp)
     ) {
-        // 评估值
-        Card(
+        // 评分条
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
+                .background(DarkCard, RoundedCornerShape(8.dp))
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "局面评估",
-                        fontSize = 11.sp,
-                        color = Color.Gray
-                    )
-                    Text(
-                        text = state.evaluation,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (state.evaluation.startsWith("+"))
-                            SuggestionGreen else if (state.evaluation.startsWith("-"))
-                            ChessRed else Color.Gray
-                    )
-                }
+            // 评分
+            Column {
+                Text("评分", fontSize = 9.sp, color = TextGray)
+                Text(
+                    text = state.evaluation,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = when {
+                        state.evaluation.startsWith("+") -> AccentGreen
+                        state.evaluation.startsWith("-") -> AccentRed
+                        else -> TextWhite
+                    }
+                )
+            }
 
-                // 引擎状态
-                Column(
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Text(
-                        text = state.engineStatus.ifEmpty { "Pikafish" },
-                        fontSize = 10.sp,
-                        color = Color.Gray
-                    )
-                    Text(
-                        text = state.analysisStatus,
-                        fontSize = 10.sp,
-                        color = Color.Gray
-                    )
-                }
+            // 引擎信息
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = state.engineStatus.ifEmpty { "Pikafish" },
+                    fontSize = 9.sp,
+                    color = TextGray
+                )
+                Text(
+                    text = state.analysisStatus,
+                    fontSize = 9.sp,
+                    color = AccentGold
+                )
             }
         }
 
-        // 重新识别按钮 + 最佳走法列表
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // 走法列表标题
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "推荐走法",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            )
-            TextButton(onClick = onReAnalyze) {
-                Text("重新识别", fontSize = 11.sp)
+            Text("推荐走法", fontSize = 11.sp, color = TextGray)
+            TextButton(
+                onClick = onReAnalyze,
+                modifier = Modifier.height(28.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Icon(
+                    Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = AccentGold
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("重新识别", fontSize = 10.sp, color = AccentGold)
             }
         }
 
+        // 走法列表
         LazyColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             items(state.bestMoves) { move ->
-                MoveItem(
-                    move = move,
-                    isFirst = state.bestMoves.indexOf(move) == 0,
-                    onClick = { onMoveClick(move) }
-                )
-            }
-        }
-    }
-}
-
-/**
- * 走法项
- */
-@Composable
-private fun MoveItem(
-    move: SuggestedMove,
-    isFirst: Boolean = false,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        colors = CardDefaults.cardColors(
-            containerColor = if (isFirst) SuggestionGreen.copy(alpha = 0.15f)
-            else Color(0xFFF0F0F0)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                if (isFirst) {
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = null,
-                        tint = ChessGold,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                val isFirst = state.bestMoves.indexOf(move) == 0
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isFirst) AccentGold.copy(alpha = 0.15f) else DarkCard,
+                            RoundedCornerShape(6.dp)
+                        )
+                        .clickable { onMoveClick(move) }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (isFirst) {
+                            Text("★ ", fontSize = 14.sp, color = AccentGold)
+                        }
+                        Text(
+                            text = move.notation,
+                            fontSize = if (isFirst) 15.sp else 13.sp,
+                            fontWeight = if (isFirst) FontWeight.Bold else FontWeight.Normal,
+                            color = TextWhite
+                        )
+                    }
+                    if (move.uciMove.isNotEmpty()) {
+                        Text(
+                            text = move.uciMove,
+                            fontSize = 9.sp,
+                            color = TextGray
+                        )
+                    }
                 }
-                Text(
-                    text = move.notation,
-                    fontSize = if (isFirst) 18.sp else 14.sp,
-                    fontWeight = if (isFirst) FontWeight.Bold else FontWeight.Normal
-                )
-            }
-
-            if (move.uciMove.isNotEmpty()) {
-                Text(
-                    text = move.uciMove,
-                    fontSize = 10.sp,
-                    color = Color.Gray
-                )
             }
         }
     }
 }
 
 /**
- * 就绪视图
+ * 空闲状态 - 等待识别
  */
 @Composable
-private fun ReadyView(onAnalyze: () -> Unit) {
+private fun IdleContent(onAnalyze: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            imageVector = Icons.Default.Lightbulb,
+            Icons.Default.CameraAlt,
             contentDescription = null,
-            tint = ChessGold,
-            modifier = Modifier.size(64.dp)
+            tint = AccentGold,
+            modifier = Modifier.size(40.dp)
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "象棋AI助手",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold
+            text = "点击识别棋盘",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextWhite
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "截取当前屏幕并识别棋盘",
-            fontSize = 14.sp,
-            color = Color.Gray,
+            text = "请先打开象棋APP\n确保棋盘完整显示在屏幕上",
+            fontSize = 11.sp,
+            color = TextGray,
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Button(
             onClick = onAnalyze,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = ChessGold
-            )
+            colors = ButtonDefaults.buttonColors(containerColor = AccentGold),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth(0.7f)
         ) {
-            Icon(Icons.Default.CameraAlt, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("识别棋盘")
+            Icon(
+                Icons.Default.CameraAlt,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("识别棋盘", fontSize = 14.sp)
         }
-    }
-}
-
-/**
- * 底部信息栏
- */
-@Composable
-private fun BottomInfoBar(state: OverlayState) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                color = Color(0xFFE0E0E0),
-                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
-            )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 最后一步
-        state.lastMove?.let { move ->
-            Text(
-                text = "最后: $move",
-                fontSize = 11.sp,
-                color = Color.Gray
-            )
-        } ?: Spacer(modifier = Modifier.width(1.dp))
-
-        // 提示
-        Text(
-            text = "双击放大/缩小",
-            fontSize = 10.sp,
-            color = Color.Gray
-        )
     }
 }
